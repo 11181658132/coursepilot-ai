@@ -2,6 +2,8 @@
 
 [![CoursePilot CI](https://github.com/11181658132/coursepilot-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/11181658132/coursepilot-ai/actions/workflows/ci.yml)
 
+**Live demo:** [coursepilot-ai-ebon.vercel.app](https://coursepilot-ai-ebon.vercel.app)
+
 CoursePilot AI is a grounded course knowledge base that turns lecture and tutorial
 files into answers with inspectable citations. It combines a FastAPI orchestration
 layer, a Next.js interface, OpenAI Responses + File Search, incremental indexing,
