@@ -12,11 +12,21 @@ type Message = {
   estimated_cost_usd: number; feedback?: "helpful" | "unhelpful";
 };
 type Answer = { answer: string; response_id?: string; conversation_id: string; message_id: string };
+type DocumentRecord = {
+  path: string; filename: string; course: string; material_type: "lecture" | "tutorial" | "other";
+  size_bytes: number; status: "indexed" | "pending" | "missing";
+};
+type SyncReport = {
+  uploaded: number; replaced: number; skipped: number; failed: number;
+  errors: string[];
+};
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function Home() {
+  const [view, setView] = useState<"chat" | "documents">("chat");
   const [courses, setCourses] = useState<Course[]>([]);
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -24,7 +34,13 @@ export default function Home() {
   const [materialType, setMaterialType] = useState("all");
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
+  const [documentLoading, setDocumentLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [uploadCourse, setUploadCourse] = useState("");
+  const [uploadMaterial, setUploadMaterial] = useState("lecture");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [syncPreview, setSyncPreview] = useState<SyncReport | null>(null);
 
   async function loadConversations() {
     const response = await fetch(`${API_URL}/api/conversations`);
@@ -46,10 +62,30 @@ export default function Home() {
       .then(([courseData, conversationData]) => {
         setCourses(courseData);
         setConversations(conversationData);
-        if (courseData.length > 0) setCourse(courseData[0].course);
+        if (courseData.length > 0) {
+          setCourse(courseData[0].course);
+          setUploadCourse(courseData[0].course);
+        }
       })
       .catch((reason: Error) => setError(reason.message));
   }, []);
+
+  async function refreshLibrary() {
+    const [courseResponse, documentResponse] = await Promise.all([
+      fetch(`${API_URL}/api/courses`),
+      fetch(`${API_URL}/api/documents`),
+    ]);
+    if (!courseResponse.ok || !documentResponse.ok) throw new Error("无法读取资料列表");
+    const courseData = await courseResponse.json() as Course[];
+    setCourses(courseData);
+    setDocuments(await documentResponse.json());
+    if (!uploadCourse && courseData.length > 0) setUploadCourse(courseData[0].course);
+  }
+
+  useEffect(() => {
+    if (view !== "documents") return;
+    refreshLibrary().catch((reason: Error) => setError(reason.message));
+  }, [view]);
 
   const selected = useMemo(
     () => courses.find((item) => item.course === course),
@@ -130,15 +166,111 @@ export default function Home() {
     }
   }
 
+  async function uploadDocument(event: FormEvent) {
+    event.preventDefault();
+    if (!uploadFile || !uploadCourse.trim()) return;
+    setDocumentLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const query = new URLSearchParams({
+        course: uploadCourse.trim(), material_type: uploadMaterial, filename: uploadFile.name,
+      });
+      const response = await fetch(`${API_URL}/api/documents/upload?${query}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: uploadFile,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "上传失败");
+      setUploadFile(null);
+      setSyncPreview(null);
+      setNotice("文件已安全保存。点击“检查索引更新”后再开始索引。");
+      await refreshLibrary();
+      const input = document.getElementById("document-file") as HTMLInputElement | null;
+      if (input) input.value = "";
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "发生未知错误");
+    } finally {
+      setDocumentLoading(false);
+    }
+  }
+
+  async function previewIndex() {
+    setDocumentLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`${API_URL}/api/sync/preview`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "检查失败");
+      setSyncPreview(data);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "发生未知错误");
+    } finally {
+      setDocumentLoading(false);
+    }
+  }
+
+  async function runIndex() {
+    setDocumentLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`${API_URL}/api/sync`, { method: "POST" });
+      const data = await response.json() as SyncReport & { detail?: string };
+      if (!response.ok) throw new Error(data.detail ?? "索引失败");
+      setNotice(`索引完成：新增 ${data.uploaded}，替换 ${data.replaced}，跳过 ${data.skipped}。`);
+      setSyncPreview(null);
+      await refreshLibrary();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "发生未知错误");
+    } finally {
+      setDocumentLoading(false);
+    }
+  }
+
+  async function deleteDocument(item: DocumentRecord) {
+    if (!window.confirm(`确定删除“${item.filename}”吗？本地文件和对应索引都会删除。`)) return;
+    setDocumentLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`${API_URL}/api/documents`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: item.path }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "删除失败");
+      setNotice(`已删除 ${item.filename}`);
+      await refreshLibrary();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "发生未知错误");
+    } finally {
+      setDocumentLoading(false);
+    }
+  }
+
+  function formatBytes(bytes: number) {
+    if (!bytes) return "—";
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   return (
     <main>
       <header className="hero">
         <div className="eyebrow">GROUNDED COURSE INTELLIGENCE</div>
         <h1>CoursePilot <span>AI</span></h1>
         <p>从 Lecture 和 Tutorial 中检索证据，再回答你的问题。</p>
+        <nav className="viewTabs" aria-label="页面切换">
+          <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>课程问答</button>
+          <button className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>资料管理</button>
+        </nav>
       </header>
 
-      <section className="workspace">
+      {view === "chat" ? <section className="workspace">
         <aside className="sidebar">
           <button className="newChat" onClick={newConversation}>＋ 新对话</button>
           <div className="sectionLabel historyLabel">聊天记录</div>
@@ -208,7 +340,51 @@ export default function Home() {
           </form>
           {error && <div className="error">{error}</div>}
         </div>
-      </section>
+      </section> : <section className="documentWorkspace">
+        <div className="managerHeader">
+          <div><div className="sectionLabel">KNOWLEDGE BASE</div><h2>课程资料管理</h2>
+            <p>上传只会保存到本地知识库；检查后由你决定是否发送到 OpenAI 建立索引。</p>
+          </div>
+          <button className="secondaryButton" onClick={previewIndex} disabled={documentLoading}>检查索引更新</button>
+        </div>
+
+        <form className="uploadCard" onSubmit={uploadDocument}>
+          <label>课程
+            <input list="course-options" value={uploadCourse} onChange={(event) => setUploadCourse(event.target.value)} placeholder="例如 90016" required />
+            <datalist id="course-options">{courses.map((item) => <option key={item.course} value={item.course} />)}</datalist>
+          </label>
+          <label>资料类型
+            <select value={uploadMaterial} onChange={(event) => setUploadMaterial(event.target.value)}>
+              <option value="lecture">Lecture</option><option value="tutorial">Tutorial</option><option value="other">其他</option>
+            </select>
+          </label>
+          <label className="fileField">选择文件
+            <input id="document-file" type="file" accept=".pdf,.pptx,.txt,.md,.docx" onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)} required />
+          </label>
+          <button disabled={documentLoading || !uploadFile || !uploadCourse.trim()}>{documentLoading ? "处理中…" : "上传到本地"}</button>
+        </form>
+
+        {syncPreview && <div className="syncCard">
+          <div><strong>索引预览</strong><span>新增 {syncPreview.uploaded} · 替换 {syncPreview.replaced} · 已是最新 {syncPreview.skipped}</span></div>
+          <button onClick={runIndex} disabled={documentLoading || (syncPreview.uploaded + syncPreview.replaced === 0)}>
+            {documentLoading ? "正在索引…" : "开始索引"}
+          </button>
+        </div>}
+        {notice && <div className="notice">{notice}</div>}
+        {error && <div className="error">{error}</div>}
+
+        <div className="documentTableWrap">
+          <table className="documentTable"><thead><tr><th>文件</th><th>课程</th><th>类型</th><th>大小</th><th>状态</th><th></th></tr></thead>
+            <tbody>{documents.map((item) => <tr key={item.path}>
+              <td><strong>{item.filename}</strong><small>{item.path}</small></td>
+              <td>{item.course}</td><td>{item.material_type}</td><td>{formatBytes(item.size_bytes)}</td>
+              <td><span className={`status ${item.status}`}>{item.status === "indexed" ? "已索引" : item.status === "pending" ? "待索引" : "本地缺失"}</span></td>
+              <td><button className="deleteButton" disabled={documentLoading} onClick={() => deleteDocument(item)}>删除</button></td>
+            </tr>)}</tbody>
+          </table>
+          {documents.length === 0 && <p className="emptyDocuments">知识库里还没有资料。</p>}
+        </div>
+      </section>}
     </main>
   );
 }

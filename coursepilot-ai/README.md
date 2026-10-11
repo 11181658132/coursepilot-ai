@@ -16,7 +16,10 @@ with citations through the OpenAI Responses API and File Search.
 - Local RAG evaluation suite with retrieval, citation, refusal, latency, and cost metrics
 - Privacy-conscious JSONL telemetry (question hashes instead of question text)
 - Persistent local conversation history and thumbs-up/down answer feedback
+- Browser-based document inventory, safe upload, explicit deletion, and re-index controls
+- Upload/path validation, per-client rate limiting, bounded API retries, and prompt-injection tests
 - Docker development setup
+- GitHub Actions CI for backend lint/tests and frontend type-check/build
 
 The course files and API key are deliberately excluded from Git.
 
@@ -119,6 +122,9 @@ python -m app.cli eval --resume
 
 - `GET /health` — readiness check
 - `GET /api/courses` — local course inventory and index status
+- `GET /api/documents` — list local and indexed documents
+- `POST /api/documents/upload` — safely add a supported document (indexing is separate)
+- `DELETE /api/documents` — explicitly delete one local and indexed document
 - `POST /api/sync/preview` — show pending changes without uploading
 - `POST /api/sync` — synchronize new and changed documents
 - `POST /api/chat` — grounded question answering
@@ -134,4 +140,4 @@ Interactive API documentation is available at <http://localhost:8000/docs>.
    the hosted File Search baseline.
 2. Add page-level PDF extraction, hybrid retrieval, reranking, and page citations.
 3. Add model-graded faithfulness after calibrating the grader against human labels.
-4. Add authentication, rate limiting, CI, and cloud deployment.
+4. Add authentication, CI, and cloud deployment.

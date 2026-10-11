@@ -30,10 +30,11 @@ h1 span { color: var(--accent); font-style: italic; }
 .sidebar, .askCard, .answerCard { border: 1px solid var(--line); border-radius: 20px; background: rgba(255, 253, 247, .9); box-shadow: 0 18px 60px rgba(30, 38, 28, .06); }
 .sidebar { padding: 24px; position: sticky; top: 24px; }
 label { display: grid; gap: 8px; margin-top: 22px; color: var(--muted); font-size: 13px; font-weight: 700; }
-select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); font: inherit; }
+select, textarea, input { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); font: inherit; }
 select { padding: 12px; }
+input { padding: 12px; }
 textarea { margin-top: 10px; padding: 18px; resize: vertical; font-size: 17px; line-height: 1.6; }
-select:focus, textarea:focus { outline: 3px solid rgba(255, 90, 54, .16); border-color: var(--accent); }
+select:focus, textarea:focus, input:focus { outline: 3px solid rgba(255, 90, 54, .16); border-color: var(--accent); }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 24px; }
 .stats div { padding: 12px 6px; border-radius: 12px; background: var(--paper); text-align: center; }
 .stats strong, .stats span { display: block; }
@@ -75,6 +76,36 @@ summary { cursor: pointer; color: var(--muted); font-weight: 700; }
 .evidence { margin-top: 14px; padding: 16px; border-radius: 12px; background: var(--paper); }
 .evidence span { margin-left: 12px; color: var(--muted); font-size: 12px; }
 .evidence p { margin-bottom: 0; color: #4d554b; line-height: 1.6; }
+.viewTabs { display: flex; gap: 8px; margin-top: 24px; }
+.viewTabs button { border: 1px solid var(--line); padding: 10px 18px; background: transparent; color: var(--ink); }
+.viewTabs button.active { border-color: var(--forest); background: var(--forest); color: white; }
+.documentWorkspace { display: grid; gap: 18px; }
+.managerHeader, .uploadCard, .syncCard, .documentTableWrap { border: 1px solid var(--line); border-radius: 20px; background: rgba(255, 253, 247, .92); box-shadow: 0 18px 60px rgba(30, 38, 28, .06); }
+.managerHeader { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 28px; }
+.managerHeader h2 { margin: 8px 0; font-family: Georgia, serif; font-size: 30px; }
+.managerHeader p { margin: 0; color: var(--muted); }
+.secondaryButton { border: 1px solid var(--forest); background: transparent; color: var(--forest); white-space: nowrap; }
+.uploadCard { display: grid; grid-template-columns: 1fr 1fr 2fr auto; align-items: end; gap: 14px; padding: 22px 28px 28px; }
+.uploadCard label { margin: 0; }
+.uploadCard input[type="file"] { padding: 9px; }
+.syncCard { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 28px; }
+.syncCard div { display: grid; gap: 4px; }
+.syncCard span { color: var(--muted); font-size: 13px; }
+.notice { border: 1px solid #9bc7ad; border-radius: 14px; padding: 16px; background: #ecf8f0; color: #155c35; }
+.documentTableWrap { overflow-x: auto; }
+.documentTable { width: 100%; border-collapse: collapse; }
+.documentTable th, .documentTable td { padding: 15px 18px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.documentTable th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.documentTable tr:last-child td { border-bottom: 0; }
+.documentTable td:first-child { max-width: 430px; }
+.documentTable td strong, .documentTable td small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.documentTable td small { margin-top: 4px; color: var(--muted); }
+.status { display: inline-block; border-radius: 999px; padding: 5px 9px; font-size: 11px; font-weight: 800; }
+.status.indexed { background: #dff3e6; color: #17613a; }
+.status.pending { background: #fff1c7; color: #815d00; }
+.status.missing { background: #fce2dd; color: #8d2415; }
+.deleteButton { border: 1px solid #e7aaa0; padding: 8px 12px; background: transparent; color: #9f2f20; }
+.emptyDocuments { padding: 30px; color: var(--muted); text-align: center; }
 
 @media (max-width: 760px) {
   main { padding-top: 32px; }
@@ -84,4 +115,6 @@ summary { cursor: pointer; color: var(--muted); font-weight: 700; }
   .userMessage { width: 92%; }
   .feedbackRow { align-items: flex-start; flex-wrap: wrap; }
   .feedbackRow .cost { width: 100%; margin: 2px 0 0; }
+  .managerHeader, .syncCard { align-items: stretch; flex-direction: column; }
+  .uploadCard { grid-template-columns: 1fr; }
 }

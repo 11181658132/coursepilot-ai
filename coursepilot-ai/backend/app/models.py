@@ -14,6 +14,30 @@ class CourseSummary(BaseModel):
     indexed_count: int = 0
 
 
+class DocumentRecord(BaseModel):
+    path: str
+    filename: str
+    course: str
+    material_type: Literal["lecture", "tutorial", "other"]
+    size_bytes: int = 0
+    status: Literal["indexed", "pending", "missing"]
+
+
+class UploadResponse(BaseModel):
+    document: DocumentRecord
+    message: str
+
+
+class DeleteDocumentRequest(BaseModel):
+    path: str = Field(min_length=3, max_length=500)
+
+
+class DeleteDocumentResponse(BaseModel):
+    path: str
+    local_deleted: bool
+    index_deleted: bool
+
+
 class SyncChange(BaseModel):
     path: str
     course: str
