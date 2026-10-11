@@ -1,34 +1,77 @@
 # CoursePilot AI
 
-CoursePilot AI is a portfolio-ready course knowledge base. It discovers course
-folders automatically, incrementally syncs PDF/PPTX files, and answers questions
-with citations through the OpenAI Responses API and File Search.
+[![CoursePilot CI](https://github.com/11181658132/coursepilot-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/11181658132/coursepilot-ai/actions/workflows/ci.yml)
 
-## Current milestone
+CoursePilot AI is a grounded course knowledge base that turns lecture and tutorial
+files into answers with inspectable citations. It combines a FastAPI orchestration
+layer, a Next.js interface, OpenAI Responses + File Search, incremental indexing,
+evaluation, and privacy-conscious local persistence.
 
-- FastAPI backend with health, course inventory, sync preview, sync, and chat APIs
-- Next.js + TypeScript frontend
-- Course and lecture/tutorial filters
-- SHA-256 incremental indexing (unchanged files are skipped)
-- File citations and retrieved evidence in every answer
-- Local JSON sync state with atomic writes
-- Unit tests for folder discovery and state persistence
-- Local RAG evaluation suite with retrieval, citation, refusal, latency, and cost metrics
-- Privacy-conscious JSONL telemetry (question hashes instead of question text)
-- Persistent local conversation history and thumbs-up/down answer feedback
-- Browser-based document inventory, safe upload, explicit deletion, and re-index controls
-- Upload/path validation, per-client rate limiting, bounded API retries, and prompt-injection tests
-- Docker development setup
-- GitHub Actions CI for backend lint/tests and frontend type-check/build
+> The public portfolio preview uses fictional material and canned answers. It never
+> sends a request to OpenAI and contains no university course files. The real local
+> application uses the same interface with live retrieval.
 
-The course files and API key are deliberately excluded from Git.
+![CoursePilot AI chat with a grounded answer and source citation](docs/assets/coursepilot-chat.png)
 
-## Folder convention
+## Why this project is more than a chatbot
 
-The scanner expects this shape, but discovers course names dynamically:
+| Area | Implementation |
+| --- | --- |
+| Grounding | Separate vector stores by course and material type, retrieved evidence, file citations, and explicit refusal instructions |
+| Ingestion | PDF/PPTX/DOCX/TXT/MD discovery, SHA-256 change detection, incremental upload, replacement, deletion, and index preview |
+| Product | Course filters, lecture/tutorial scope, multi-turn history, source inspection, feedback, document management, and responsive UI |
+| Safety | File extension/signature/size/path validation, prompt-injection resistance, bounded retries, and per-client rate limits |
+| Evaluation | 13 labelled bilingual cases covering retrieval, concepts, refusals, citations, latency, token usage, and cost |
+| Engineering | Typed API models, 20 backend tests, frontend type checking/build, Docker development, and GitHub Actions CI |
+| Privacy | API keys, raw course files, telemetry, conversations, and remote index state are excluded from Git |
+
+## Architecture
+
+![CoursePilot AI architecture](docs/assets/architecture.svg)
+
+The backend deliberately owns retrieval and secrets. The browser never receives
+the OpenAI API key. Each `course:material_type` combination maps to a separate
+vector store, and local hashes prevent unchanged files from being uploaded twice.
+See [the architecture notes](docs/architecture.md) for the request and ingestion
+flows and their trade-offs.
+
+## Evaluation snapshot
+
+The checked-in dataset contains 13 cases across three courses:
+
+- grounded factual questions with expected source files and bilingual concepts;
+- questions that are intentionally unanswerable from the course material;
+- a direct prompt-injection attempt requesting the system prompt and API key.
+
+The latest completed low-cost smoke sample passed **3/3** cases with **100% retrieval
+hit rate**, **100% citation precision**, and **100% keyword recall**. A full run can
+be resumed without paying for completed cases. Generated reports remain local
+because they can contain course-derived answers and filenames.
+
+```bash
+cd backend
+python -m app.cli eval --resume
+```
+
+The evaluator writes machine-readable JSON and a standalone HTML dashboard to
+`evals/reports/`. Its estimated cost combines model-token usage with the number
+of hosted File Search calls; both prices remain configurable because rates change.
+
+## Run the real application locally
+
+### 1. Configure secrets
+
+```bash
+cp .env.example .env
+```
+
+Set `OPENAI_API_KEY` and `KNOWLEDGE_BASE_DIR` in `.env`. Never paste a real key
+into source code or commit it.
+
+The scanner discovers course names dynamically and expects this shape:
 
 ```text
-知识库/
+knowledge-base/
 ├── 90016/
 │   ├── lecture/
 │   └── tutorial/
@@ -38,19 +81,9 @@ The scanner expects this shape, but discovers course names dynamically:
 ```
 
 Files containing `tute` or `tutorial` are classified as tutorial material even
-when they are not inside a tutorial folder.
+when they are outside a tutorial folder.
 
-## Run locally
-
-### 1. Configure secrets
-
-```bash
-cp .env.example .env
-```
-
-Put your key in `.env`. Never paste it into source code or commit it.
-
-### 2. Backend
+### 2. Start the backend
 
 ```bash
 python3 -m venv .venv
@@ -59,9 +92,9 @@ pip install -r backend/requirements.txt
 uvicorn app.main:app --app-dir backend --reload --port 8000
 ```
 
-### 3. Frontend
+### 3. Start the frontend
 
-Requires Node.js 20+.
+Node.js 20+ is required.
 
 ```bash
 cd frontend
@@ -70,74 +103,83 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:3000>.
+Open <http://localhost:3000>. Interactive backend documentation is available at
+<http://localhost:8000/docs>.
 
-## First sync
+## Index documents
 
-Previewing is free and does not upload anything:
+Previewing is local and free:
 
 ```bash
+cd backend
 python -m app.cli sync --dry-run
 ```
 
-Run this from `backend/` to upload the discovered documents:
+Run the actual sync only for material you are allowed to process:
 
 ```bash
 python -m app.cli sync
 ```
 
-Running it again only uploads new or changed files. This operation sends course
-documents to OpenAI vector stores, so keep the project private and only upload
-material you are allowed to process.
+Subsequent runs skip unchanged files. New and changed documents are sent to an
+OpenAI vector store and can incur API storage/processing charges.
+
+## Safe portfolio preview
+
+The frontend includes an explicit read-only mode for public deployment. It uses
+fictional files and example responses, disables destructive document operations,
+and makes no backend or OpenAI requests.
+
+```bash
+cd frontend
+NEXT_PUBLIC_DEMO_MODE=true npm run dev
+```
+
+For a Vercel preview, set the project root to `frontend` and add:
+
+```text
+NEXT_PUBLIC_DEMO_MODE=true
+```
+
+No `OPENAI_API_KEY` is needed for this mode.
 
 ## Tests
 
 ```bash
 python -m unittest discover -s backend/tests -v
+cd frontend && npm run typecheck && npm run build
 ```
 
-## Evaluation
+GitHub Actions repeats these checks on every push and pull request.
 
-The labelled dataset lives in `evals/questions.jsonl`. Run a low-cost smoke test
-from `backend/` with:
-
-```bash
-python -m app.cli eval --limit 3
-```
-
-Run the full suite by omitting `--limit`. Each run writes machine-readable JSON
-and a standalone visual report to `evals/reports/latest.json` and
-`evals/reports/latest.html`. The suite measures expected-file retrieval hit rate,
-citation precision, bilingual concept recall, expected refusals, latency, token usage, and
-estimated cost. Token prices are configurable environment values because API
-pricing can change.
-
-If a run is interrupted by an API rate limit, retry only blocked cases later:
-
-```bash
-python -m app.cli eval --resume
-```
-
-## API
+## API surface
 
 - `GET /health` — readiness check
-- `GET /api/courses` — local course inventory and index status
-- `GET /api/documents` — list local and indexed documents
-- `POST /api/documents/upload` — safely add a supported document (indexing is separate)
-- `DELETE /api/documents` — explicitly delete one local and indexed document
-- `POST /api/sync/preview` — show pending changes without uploading
-- `POST /api/sync` — synchronize new and changed documents
+- `GET /api/courses` — course inventory and index status
+- `GET /api/documents` — local and indexed document inventory
+- `POST /api/documents/upload` — validated local upload
+- `DELETE /api/documents` — explicit local and remote deletion
+- `POST /api/sync/preview` — pending index changes without upload
+- `POST /api/sync` — incremental synchronization
 - `POST /api/chat` — grounded question answering
-- `GET /api/conversations` — list local conversation history
-- `GET /api/conversations/{id}/messages` — load a conversation
-- `POST /api/feedback` — save human feedback for an assistant answer
+- `GET /api/conversations` — conversation history
+- `GET /api/conversations/{id}/messages` — conversation messages
+- `POST /api/feedback` — human feedback for an answer
 
-Interactive API documentation is available at <http://localhost:8000/docs>.
+## Design decisions and limitations
 
-## Roadmap toward the internship-ready version
+- Hosted File Search made the first reliable baseline fast to build. A pgvector
+  implementation would provide more control over chunking, hybrid retrieval, and
+  reranking and is the next retrieval experiment.
+- Conversation history is intentionally local-first. A multi-user deployment
+  needs authentication, PostgreSQL, tenant isolation, migrations, and backups.
+- Public live inference is not enabled: exposing an unauthenticated API would risk
+  API-key abuse and could redistribute course content. The public preview is safe
+  and static; the full RAG workflow is demonstrated locally.
 
-1. Add a self-managed PostgreSQL/pgvector retrieval pipeline and compare it with
-   the hosted File Search baseline.
-2. Add page-level PDF extraction, hybrid retrieval, reranking, and page citations.
-3. Add model-graded faithfulness after calibrating the grader against human labels.
-4. Add authentication, CI, and cloud deployment.
+## Roadmap
+
+1. Compare hosted File Search with PostgreSQL/pgvector hybrid retrieval and reranking.
+2. Add page-level PDF extraction and page citations.
+3. Calibrate a model-graded faithfulness metric against human labels.
+4. Add authentication, tenant isolation, durable cloud storage, and observability.

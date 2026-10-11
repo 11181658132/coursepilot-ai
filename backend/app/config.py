@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     conversation_db_path: Path = PROJECT_ROOT / "backend/data/coursepilot.db"
     openai_input_cost_per_million: float = 0.10
     openai_output_cost_per_million: float = 0.50
+    openai_file_search_cost_per_thousand: float = 2.50
     max_upload_mb: int = 25
     chat_requests_per_minute: int = 12
     admin_requests_per_minute: int = 30

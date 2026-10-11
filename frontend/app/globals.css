@@ -79,6 +79,8 @@ summary { cursor: pointer; color: var(--muted); font-weight: 700; }
 .viewTabs { display: flex; gap: 8px; margin-top: 24px; }
 .viewTabs button { border: 1px solid var(--line); padding: 10px 18px; background: transparent; color: var(--ink); }
 .viewTabs button.active { border-color: var(--forest); background: var(--forest); color: white; }
+.demoBanner { display: flex; align-items: center; gap: 12px; width: fit-content; margin-top: 16px; border: 1px solid #dfb95d; border-radius: 12px; padding: 10px 14px; background: #fff6d8; color: #6c4b00; font-size: 12px; }
+.demoBanner strong { white-space: nowrap; }
 .documentWorkspace { display: grid; gap: 18px; }
 .managerHeader, .uploadCard, .syncCard, .documentTableWrap { border: 1px solid var(--line); border-radius: 20px; background: rgba(255, 253, 247, .92); box-shadow: 0 18px 60px rgba(30, 38, 28, .06); }
 .managerHeader { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 28px; }
@@ -117,4 +119,5 @@ summary { cursor: pointer; color: var(--muted); font-weight: 700; }
   .feedbackRow .cost { width: 100%; margin: 2px 0 0; }
   .managerHeader, .syncCard { align-items: stretch; flex-direction: column; }
   .uploadCard { grid-template-columns: 1fr; }
+  .demoBanner { align-items: flex-start; flex-direction: column; gap: 3px; }
 }

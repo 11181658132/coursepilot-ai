@@ -13,12 +13,17 @@ def append_event(path: Path, event: Dict[str, Any]) -> None:
 
 
 def estimate_cost(
-    usage: Dict[str, Any], input_cost_per_million: float, output_cost_per_million: float
+    usage: Dict[str, Any],
+    input_cost_per_million: float,
+    output_cost_per_million: float,
+    file_search_calls: int = 0,
+    file_search_cost_per_thousand: float = 0.0,
 ) -> float:
     input_tokens = int(usage.get("input_tokens") or 0)
     output_tokens = int(usage.get("output_tokens") or 0)
-    cost = (
+    token_cost = (
         input_tokens * input_cost_per_million
         + output_tokens * output_cost_per_million
     ) / 1_000_000
-    return round(cost, 8)
+    tool_cost = file_search_calls * file_search_cost_per_thousand / 1_000
+    return round(token_cost + tool_cost, 8)

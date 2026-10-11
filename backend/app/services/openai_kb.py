@@ -39,6 +39,7 @@ class OpenAIKnowledgeBase:
         telemetry_path: Optional[Path] = None,
         input_cost_per_million: float = 0.0,
         output_cost_per_million: float = 0.0,
+        file_search_cost_per_thousand: float = 0.0,
         max_retries: int = 2,
         timeout_seconds: float = 60.0,
     ):
@@ -55,6 +56,7 @@ class OpenAIKnowledgeBase:
         self.telemetry_path = telemetry_path
         self.input_cost_per_million = input_cost_per_million
         self.output_cost_per_million = output_cost_per_million
+        self.file_search_cost_per_thousand = file_search_cost_per_thousand
 
     def delete_document(self, relative_path: str) -> bool:
         state = load_state(self.state_path)
@@ -234,6 +236,7 @@ class OpenAIKnowledgeBase:
         citations: List[Citation] = []
         evidence: List[Evidence] = []
         seen_citations = set()
+        file_search_calls = 0
         for output in payload.get("output", []):
             if output.get("type") == "message":
                 for content in output.get("content", []):
@@ -245,6 +248,7 @@ class OpenAIKnowledgeBase:
                             citations.append(Citation(filename=key[0] or "unknown", file_id=key[1]))
                             seen_citations.add(key)
             if output.get("type") == "file_search_call":
+                file_search_calls += 1
                 results = output.get("results") or output.get("search_results") or []
                 for result in results:
                     content = result.get("content") or []
@@ -265,6 +269,8 @@ class OpenAIKnowledgeBase:
             usage,
             self.input_cost_per_million,
             self.output_cost_per_million,
+            file_search_calls,
+            self.file_search_cost_per_thousand,
         )
         if self.telemetry_path:
             append_event(
@@ -280,6 +286,7 @@ class OpenAIKnowledgeBase:
                     "response_id": getattr(response, "id", None),
                     "citation_count": len(citations),
                     "evidence_count": len(evidence),
+                    "file_search_calls": file_search_calls,
                     "latency_ms": latency_ms,
                     "usage": usage,
                     "estimated_cost_usd": estimated_cost_usd,

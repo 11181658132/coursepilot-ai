@@ -65,6 +65,7 @@ def get_knowledge_base(config: Settings = Depends(get_settings)) -> OpenAIKnowle
             telemetry_path=config.telemetry_path,
             input_cost_per_million=config.openai_input_cost_per_million,
             output_cost_per_million=config.openai_output_cost_per_million,
+            file_search_cost_per_thousand=config.openai_file_search_cost_per_thousand,
             max_retries=config.openai_max_retries,
             timeout_seconds=config.openai_timeout_seconds,
         )

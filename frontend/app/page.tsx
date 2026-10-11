@@ -22,33 +22,90 @@ type SyncReport = {
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+
+const DEMO_COURSES: Course[] = [
+  { course: "DEMO101", lecture_count: 8, tutorial_count: 6, other_count: 0, indexed_count: 14 },
+];
+const DEMO_CONVERSATIONS: Conversation[] = [
+  {
+    id: "demo-conversation",
+    title: "为什么 RAG 需要引用来源？",
+    course: "DEMO101",
+    material_type: "lecture",
+    message_count: 2,
+    updated_at: "2026-10-11T00:00:00Z",
+  },
+];
+const DEMO_MESSAGES: Message[] = [
+  {
+    id: "demo-user",
+    conversation_id: "demo-conversation",
+    role: "user",
+    content: "为什么 RAG 系统需要返回引用来源？",
+    citations: [], evidence: [], latency_ms: 0, estimated_cost_usd: 0,
+  },
+  {
+    id: "demo-assistant",
+    conversation_id: "demo-conversation",
+    role: "assistant",
+    content: "引用让使用者能够核对回答是否真正来自指定资料，同时帮助开发者发现检索错误与幻觉。CoursePilot 会同时保留文件引用和检索证据；资料不足时，它会明确拒答，而不是补全未经证实的信息。",
+    citations: [{ filename: "lecture-03-grounded-ai.md", file_id: "demo-file" }],
+    evidence: [{
+      filename: "lecture-03-grounded-ai.md",
+      score: 0.947,
+      text: "A grounded assistant should expose its evidence, distinguish retrieved facts from generated explanations, and abstain when evidence is insufficient.",
+    }],
+    latency_ms: 842,
+    estimated_cost_usd: 0.0031,
+    feedback: "helpful",
+  },
+];
+const DEMO_DOCUMENTS: DocumentRecord[] = [
+  { path: "DEMO101/lecture/lecture-03-grounded-ai.md", filename: "lecture-03-grounded-ai.md", course: "DEMO101", material_type: "lecture", size_bytes: 18432, status: "indexed" },
+  { path: "DEMO101/tutorial/tutorial-03-evaluation.md", filename: "tutorial-03-evaluation.md", course: "DEMO101", material_type: "tutorial", size_bytes: 12288, status: "indexed" },
+  { path: "DEMO101/lecture/lecture-04-safety.md", filename: "lecture-04-safety.md", course: "DEMO101", material_type: "lecture", size_bytes: 15360, status: "indexed" },
+];
 
 export default function Home() {
   const [view, setView] = useState<"chat" | "documents">("chat");
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [course, setCourse] = useState("");
-  const [materialType, setMaterialType] = useState("all");
+  const [courses, setCourses] = useState<Course[]>(DEMO_MODE ? DEMO_COURSES : []);
+  const [documents, setDocuments] = useState<DocumentRecord[]>(DEMO_MODE ? DEMO_DOCUMENTS : []);
+  const [conversations, setConversations] = useState<Conversation[]>(DEMO_MODE ? DEMO_CONVERSATIONS : []);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(DEMO_MODE ? DEMO_CONVERSATIONS[0].id : null);
+  const [messages, setMessages] = useState<Message[]>(DEMO_MODE ? DEMO_MESSAGES : []);
+  const [course, setCourse] = useState(DEMO_MODE ? DEMO_COURSES[0].course : "");
+  const [materialType, setMaterialType] = useState(DEMO_MODE ? "lecture" : "all");
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [uploadCourse, setUploadCourse] = useState("");
+  const [uploadCourse, setUploadCourse] = useState(DEMO_MODE ? DEMO_COURSES[0].course : "");
   const [uploadMaterial, setUploadMaterial] = useState("lecture");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [syncPreview, setSyncPreview] = useState<SyncReport | null>(null);
 
   async function loadConversations() {
+    if (DEMO_MODE) {
+      setConversations(DEMO_CONVERSATIONS);
+      return;
+    }
     const response = await fetch(`${API_URL}/api/conversations`);
     if (!response.ok) throw new Error("无法读取聊天记录");
     setConversations(await response.json());
   }
 
   useEffect(() => {
+    if (DEMO_MODE) {
+      setCourses(DEMO_COURSES);
+      setConversations(DEMO_CONVERSATIONS);
+      setCourse(DEMO_COURSES[0].course);
+      setUploadCourse(DEMO_COURSES[0].course);
+      setActiveConversationId(DEMO_CONVERSATIONS[0].id);
+      setMessages(DEMO_MESSAGES);
+      return;
+    }
     Promise.all([
       fetch(`${API_URL}/api/courses`).then((response) => {
         if (!response.ok) throw new Error("无法读取课程列表");
@@ -71,6 +128,11 @@ export default function Home() {
   }, []);
 
   async function refreshLibrary() {
+    if (DEMO_MODE) {
+      setCourses(DEMO_COURSES);
+      setDocuments(DEMO_DOCUMENTS);
+      return;
+    }
     const [courseResponse, documentResponse] = await Promise.all([
       fetch(`${API_URL}/api/courses`),
       fetch(`${API_URL}/api/documents`),
@@ -94,6 +156,13 @@ export default function Home() {
 
   async function openConversation(item: Conversation) {
     setError("");
+    if (DEMO_MODE) {
+      setMessages(DEMO_MESSAGES);
+      setActiveConversationId(item.id);
+      setCourse(item.course);
+      setMaterialType(item.material_type);
+      return;
+    }
     try {
       const response = await fetch(`${API_URL}/api/conversations/${item.id}/messages`);
       if (!response.ok) throw new Error("无法读取对话内容");
@@ -119,6 +188,23 @@ export default function Home() {
     if (!submittedQuestion || !course) return;
     setLoading(true);
     setError("");
+    if (DEMO_MODE) {
+      const conversationId = activeConversationId ?? "demo-live-conversation";
+      const userMessage: Message = {
+        id: `demo-user-${Date.now()}`, conversation_id: conversationId, role: "user",
+        content: submittedQuestion, citations: [], evidence: [], latency_ms: 0,
+        estimated_cost_usd: 0,
+      };
+      const assistantMessage: Message = {
+        ...DEMO_MESSAGES[1], id: `demo-assistant-${Date.now()}`,
+        conversation_id: conversationId, feedback: undefined,
+      };
+      setMessages((current) => [...current, userMessage, assistantMessage]);
+      setActiveConversationId(conversationId);
+      setQuestion("");
+      setLoading(false);
+      return;
+    }
     try {
       const previousResponseId = [...messages]
         .reverse()
@@ -151,6 +237,12 @@ export default function Home() {
 
   async function rate(messageId: string, rating: "helpful" | "unhelpful") {
     setError("");
+    if (DEMO_MODE) {
+      setMessages((current) => current.map((message) =>
+        message.id === messageId ? { ...message, feedback: rating } : message,
+      ));
+      return;
+    }
     try {
       const response = await fetch(`${API_URL}/api/feedback`, {
         method: "POST",
@@ -169,6 +261,10 @@ export default function Home() {
   async function uploadDocument(event: FormEvent) {
     event.preventDefault();
     if (!uploadFile || !uploadCourse.trim()) return;
+    if (DEMO_MODE) {
+      setNotice("公开展示为只读模式，不会上传文件或调用外部 API。");
+      return;
+    }
     setDocumentLoading(true);
     setError("");
     setNotice("");
@@ -197,6 +293,10 @@ export default function Home() {
   }
 
   async function previewIndex() {
+    if (DEMO_MODE) {
+      setSyncPreview({ uploaded: 0, replaced: 0, skipped: DEMO_DOCUMENTS.length, failed: 0, errors: [] });
+      return;
+    }
     setDocumentLoading(true);
     setError("");
     setNotice("");
@@ -213,6 +313,10 @@ export default function Home() {
   }
 
   async function runIndex() {
+    if (DEMO_MODE) {
+      setNotice("公开展示为只读模式，索引未发生变化。");
+      return;
+    }
     setDocumentLoading(true);
     setError("");
     setNotice("");
@@ -231,6 +335,10 @@ export default function Home() {
   }
 
   async function deleteDocument(item: DocumentRecord) {
+    if (DEMO_MODE) {
+      setNotice(`公开展示为只读模式，不会删除 ${item.filename}。`);
+      return;
+    }
     if (!window.confirm(`确定删除“${item.filename}”吗？本地文件和对应索引都会删除。`)) return;
     setDocumentLoading(true);
     setError("");
@@ -268,6 +376,7 @@ export default function Home() {
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>课程问答</button>
           <button className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>资料管理</button>
         </nav>
+        {DEMO_MODE && <div className="demoBanner"><strong>公开展示模式</strong><span>使用虚构资料和示例回答，不调用 OpenAI API，也不包含真实课程文件。</span></div>}
       </header>
 
       {view === "chat" ? <section className="workspace">
@@ -379,7 +488,7 @@ export default function Home() {
               <td><strong>{item.filename}</strong><small>{item.path}</small></td>
               <td>{item.course}</td><td>{item.material_type}</td><td>{formatBytes(item.size_bytes)}</td>
               <td><span className={`status ${item.status}`}>{item.status === "indexed" ? "已索引" : item.status === "pending" ? "待索引" : "本地缺失"}</span></td>
-              <td><button className="deleteButton" disabled={documentLoading} onClick={() => deleteDocument(item)}>删除</button></td>
+              <td><button className="deleteButton" disabled={documentLoading || DEMO_MODE} onClick={() => deleteDocument(item)}>{DEMO_MODE ? "只读" : "删除"}</button></td>
             </tr>)}</tbody>
           </table>
           {documents.length === 0 && <p className="emptyDocuments">知识库里还没有资料。</p>}

@@ -59,6 +59,7 @@ def main() -> None:
         telemetry_path=settings.telemetry_path,
         input_cost_per_million=settings.openai_input_cost_per_million,
         output_cost_per_million=settings.openai_output_cost_per_million,
+        file_search_cost_per_thousand=settings.openai_file_search_cost_per_thousand,
     )
     if args.command == "eval":
         cases = load_cases(args.dataset)
