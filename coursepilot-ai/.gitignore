@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+backend/data/index_state.json
+backend/data/chat_events.jsonl
+backend/data/coursepilot.db
+evals/reports/
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+frontend/next-env.d.ts
+frontend/tsconfig.tsbuildinfo
+.DS_Store

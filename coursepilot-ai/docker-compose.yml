@@ -1,0 +1,22 @@
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/backend/data
+      - ${KNOWLEDGE_BASE_DIR:-/Users/zxz/Desktop/ppt/知识库}:/knowledge-base:ro
+    environment:
+      KNOWLEDGE_BASE_DIR: /knowledge-base
+      INDEX_STATE_PATH: /app/backend/data/index_state.json
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+
