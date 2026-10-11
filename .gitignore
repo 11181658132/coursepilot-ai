@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
 .mypy_cache/
 backend/data/index_state.json
 backend/data/chat_events.jsonl

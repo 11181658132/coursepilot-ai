@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: coursepilot-ai/backend
+        working-directory: backend
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: coursepilot-ai/backend/requirements*.txt
+          cache-dependency-path: backend/requirements*.txt
       - name: Install dependencies
         run: python -m pip install -r requirements-dev.txt
       - name: Lint
@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: coursepilot-ai/frontend
+        working-directory: frontend
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -46,7 +46,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: coursepilot-ai/frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Type-check

@@ -15,6 +15,7 @@ from app.models import (
     DocumentRecord,
     FeedbackRequest,
     FeedbackResponse,
+    SyncChange,
     SyncReport,
     UploadResponse,
 )
@@ -213,12 +214,12 @@ def preview_sync(
             action = "upload"
             report.uploaded += 1
         report.changes.append(
-            {
-                "path": document.relative_path,
-                "course": document.course,
-                "material_type": document.material_type,
-                "action": action,
-            }
+            SyncChange(
+                path=document.relative_path,
+                course=document.course,
+                material_type=document.material_type,
+                action=action,
+            )
         )
     return report
 
