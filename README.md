@@ -25,7 +25,7 @@ evaluation, and privacy-conscious local persistence.
 | Product | Course filters, lecture/tutorial scope, multi-turn history, source inspection, feedback, document management, and responsive UI |
 | Safety | File extension/signature/size/path validation, prompt-injection resistance, bounded retries, per-IP demo limits, and server-only secrets |
 | Evaluation | 13 labelled bilingual cases covering retrieval, concepts, refusals, citations, latency, token usage, and cost |
-| Engineering | Typed API models, 20 backend tests, frontend type checking/build, Docker development, and GitHub Actions CI |
+| Engineering | Typed API models, 20 backend tests, 7 public-route tests, frontend type checking/build, Docker development, and GitHub Actions CI |
 | Privacy | API keys, raw course files, telemetry, conversations, and remote index state are excluded from Git |
 
 ## Public demo safeguards
@@ -36,6 +36,10 @@ per day, caps the application at 300 questions per month, bounds question and an
 length, validates scope, and returns safe errors without logging prompts. Provider-level
 project spend limits remain the final cost boundary because serverless in-memory limits
 can reset when instances are replaced.
+
+Public requests emit privacy-safe structured telemetry for request IDs, latency,
+token use, tool calls, citation count, and estimated cost. Prompts, answers, retrieved
+evidence, API keys, and client IPs are never logged.
 
 The five public source documents are versioned in `frontend/demo-knowledge/`, making
 the demo reproducible and allowing reviewers to verify that citations are genuine.
@@ -139,30 +143,37 @@ python -m app.cli sync
 Subsequent runs skip unchanged files. New and changed documents are sent to an
 OpenAI vector store and can incur API storage/processing charges.
 
-## Safe portfolio preview
+## Public portfolio demo
 
 The frontend includes an explicit read-only mode for public deployment. It uses
-fictional files and example responses, disables destructive document operations,
-and makes no backend or OpenAI requests.
+five versioned fictional files, disables destructive document operations, and sends
+questions to a same-origin server Route Handler. That handler keeps the API key on
+the server, scopes File Search to `DEMO101`, validates input, applies request limits,
+and returns real citations and retrieved evidence.
 
 ```bash
 cd frontend
 NEXT_PUBLIC_DEMO_MODE=true npm run dev
 ```
 
-For a Vercel preview, set the project root to `frontend` and add:
+For a Vercel deployment, set the project root to `frontend` and add:
 
 ```text
 NEXT_PUBLIC_DEMO_MODE=true
+OPENAI_API_KEY=...
+OPENAI_DEMO_VECTOR_STORE_ID=...
+DEMO_RATE_LIMIT_SALT=...
 ```
 
-No `OPENAI_API_KEY` is needed for this mode.
+Keep the last three values server-only secrets. The production deployment uses a
+dedicated OpenAI project with an enforced monthly hard spend limit. The service key
+must be rotated before its configured expiry date.
 
 ## Tests
 
 ```bash
 python -m unittest discover -s backend/tests -v
-cd frontend && npm run typecheck && npm run build
+cd frontend && npm test && npm run typecheck && npm run build
 ```
 
 GitHub Actions repeats these checks on every push and pull request.
@@ -188,9 +199,10 @@ GitHub Actions repeats these checks on every push and pull request.
   reranking and is the next retrieval experiment.
 - Conversation history is intentionally local-first. A multi-user deployment
   needs authentication, PostgreSQL, tenant isolation, migrations, and backups.
-- Public live inference is not enabled: exposing an unauthenticated API would risk
-  API-key abuse and could redistribute course content. The public preview is safe
-  and static; the full RAG workflow is demonstrated locally.
+- Public inference is isolated from private course data: it uses a dedicated OpenAI
+  project and fictional files. Its in-memory application counters are intentionally
+  backed by a provider hard spend limit; durable multi-instance rate limiting is the
+  next production step.
 
 ## Roadmap
 

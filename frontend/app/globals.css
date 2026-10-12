@@ -68,8 +68,14 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .feedbackRow button { border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; background: transparent; color: var(--ink); }
 .feedbackRow button.selected { border-color: var(--accent); background: rgba(255, 90, 54, .12); }
 .feedbackRow .cost { margin-left: auto; }
+.feedbackRow .requestId { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .error { border: 1px solid #efaaa0; border-radius: 14px; padding: 16px; background: #fff0ed; color: #8d2415; }
-.answer { margin-top: 18px; white-space: pre-wrap; font-size: 17px; line-height: 1.8; }
+.answer { margin-top: 18px; font-size: 17px; line-height: 1.8; }
+.answer > :first-child { margin-top: 0; }
+.answer > :last-child { margin-bottom: 0; }
+.answer p, .answer ul, .answer ol { margin: 10px 0; }
+.answer li + li { margin-top: 6px; }
+.answer code { border-radius: 5px; padding: 2px 5px; background: var(--paper); font-size: .9em; }
 .sources { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--line); }
 .sources h2 { font-size: 14px; }
 .sources ul { padding-left: 20px; }

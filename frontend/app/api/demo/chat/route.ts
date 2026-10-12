@@ -14,9 +14,26 @@ const FILE_SEARCH_COST = 0.0025;
 
 type WindowCounter = { count: number; resetAt: number };
 type DemoHistoryItem = { role: "user" | "assistant"; content: string };
+type TelemetryEvent = {
+  request_id: string;
+  status: "success" | "upstream_error" | "timeout" | "error";
+  latency_ms: number;
+  openai_request_id?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  file_search_calls?: number;
+  citation_count?: number;
+  estimated_cost_usd?: number;
+  upstream_status?: number;
+};
 
 const ipCounters = new Map<string, WindowCounter>();
 let globalCounter: WindowCounter = { count: 0, resetAt: nextMonthStart() };
+
+export function resetDemoRateLimitsForTests() {
+  ipCounters.clear();
+  globalCounter = { count: 0, resetAt: nextMonthStart() };
+}
 
 const SYSTEM_INSTRUCTIONS = `You are CoursePilot AI's public portfolio demo.
 You must search the provided fictional DEMO101 course files before answering.
@@ -87,7 +104,7 @@ function refundLimit(key: string | undefined) {
 
 function sameOrigin(request: Request) {
   const origin = request.headers.get("origin");
-  if (!origin) return true;
+  if (!origin) return process.env.NODE_ENV !== "production";
   try {
     const requestHost = request.headers.get("x-forwarded-host")
       || request.headers.get("host")
@@ -127,6 +144,11 @@ function cleanAnswer(value: unknown) {
     .trim();
 }
 
+function recordTelemetry(event: TelemetryEvent) {
+  // Never log questions, answers, evidence, IP addresses, or secrets.
+  console.info(JSON.stringify({ event: "coursepilot_demo_request", ...event }));
+}
+
 export async function POST(request: Request) {
   if (!sameOrigin(request)) {
     return Response.json({ detail: "请求来源无效。" }, { status: 403 });
@@ -149,9 +171,13 @@ export async function POST(request: Request) {
     return Response.json({ detail: "请求被拒绝。" }, { status: 400 });
   }
   const question = typeof body.question === "string" ? body.question.trim() : "";
+  const course = body.course;
   const materialType = body.material_type;
   if (!question || question.length > MAX_QUESTION_CHARS) {
     return Response.json({ detail: `问题长度应为 1–${MAX_QUESTION_CHARS} 个字符。` }, { status: 400 });
+  }
+  if (course !== "DEMO101") {
+    return Response.json({ detail: "课程范围无效。" }, { status: 400 });
   }
   if (!(["all", "lecture", "tutorial"] as unknown[]).includes(materialType)) {
     return Response.json({ detail: "资料类型无效。" }, { status: 400 });
@@ -178,6 +204,7 @@ export async function POST(request: Request) {
         ],
       };
   const started = performance.now();
+  const requestId = randomUUID();
 
   try {
     const upstream = await fetch("https://api.openai.com/v1/responses", {
@@ -185,7 +212,7 @@ export async function POST(request: Request) {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
-        "X-Client-Request-Id": randomUUID(),
+        "X-Client-Request-Id": requestId,
       },
       body: JSON.stringify({
         model: MODEL,
@@ -209,8 +236,15 @@ export async function POST(request: Request) {
       refundLimit(limit.key);
       const retryAfter = upstream.headers.get("retry-after");
       const status = upstream.status === 429 ? 429 : 502;
+      recordTelemetry({
+        request_id: requestId,
+        status: "upstream_error",
+        latency_ms: Math.round(performance.now() - started),
+        openai_request_id: upstream.headers.get("x-request-id") || undefined,
+        upstream_status: upstream.status,
+      });
       const response = Response.json(
-        { detail: status === 429 ? "AI 服务当前达到临时限额，请稍后再试。" : "AI 服务暂时不可用，请稍后再试。" },
+        { detail: status === 429 ? "AI 服务当前达到临时限额，请稍后再试。" : "AI 服务暂时不可用，请稍后再试。", request_id: requestId },
         { status },
       );
       if (retryAfter) response.headers.set("Retry-After", retryAfter);
@@ -260,22 +294,42 @@ export async function POST(request: Request) {
     const outputTokens = Number(usage.output_tokens || 0);
     const estimatedCost = (inputTokens * INPUT_COST_PER_MILLION + outputTokens * OUTPUT_COST_PER_MILLION) / 1_000_000
       + fileSearchCalls * FILE_SEARCH_COST;
+    const latencyMs = Math.round(performance.now() - started);
+    const estimatedCostUsd = Number(estimatedCost.toFixed(6));
+
+    recordTelemetry({
+      request_id: requestId,
+      status: "success",
+      latency_ms: latencyMs,
+      openai_request_id: upstream.headers.get("x-request-id") || undefined,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      file_search_calls: fileSearchCalls,
+      citation_count: citations.length,
+      estimated_cost_usd: estimatedCostUsd,
+    });
 
     return Response.json({
       answer: cleanAnswer(payload.output_text || fallbackAnswer) || "资料中没有足够信息回答这个问题。",
       response_id: payload.id ? String(payload.id) : undefined,
+      request_id: requestId,
       message_id: randomUUID(),
       citations,
       evidence,
-      latency_ms: Math.round(performance.now() - started),
-      estimated_cost_usd: Number(estimatedCost.toFixed(6)),
+      latency_ms: latencyMs,
+      estimated_cost_usd: estimatedCostUsd,
       remaining_today: limit.ipRemaining,
     });
   } catch (error) {
     refundLimit(limit.key);
     const timedOut = error instanceof Error && error.name === "TimeoutError";
+    recordTelemetry({
+      request_id: requestId,
+      status: timedOut ? "timeout" : "error",
+      latency_ms: Math.round(performance.now() - started),
+    });
     return Response.json(
-      { detail: timedOut ? "AI 回答超时，请稍后重试。" : "在线 Demo 暂时不可用，请稍后重试。" },
+      { detail: timedOut ? "AI 回答超时，请稍后重试。" : "在线 Demo 暂时不可用，请稍后重试。", request_id: requestId },
       { status: 502 },
     );
   }

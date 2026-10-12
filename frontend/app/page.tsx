@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
 
 type Course = { course: string; lecture_count: number; tutorial_count: number; other_count: number; indexed_count: number };
 type Citation = { filename: string; file_id?: string };
@@ -8,11 +9,11 @@ type Evidence = { filename: string; score?: number; text: string };
 type Conversation = { id: string; title: string; course: string; material_type: string; message_count: number; updated_at: string };
 type Message = {
   id: string; conversation_id: string; role: "user" | "assistant"; content: string;
-  response_id?: string; citations: Citation[]; evidence: Evidence[]; latency_ms: number;
+  response_id?: string; request_id?: string; citations: Citation[]; evidence: Evidence[]; latency_ms: number;
   estimated_cost_usd: number; feedback?: "helpful" | "unhelpful";
 };
 type Answer = {
-  answer: string; response_id?: string; conversation_id?: string; message_id: string;
+  answer: string; response_id?: string; request_id?: string; conversation_id?: string; message_id: string;
   citations?: Citation[]; evidence?: Evidence[]; latency_ms?: number;
   estimated_cost_usd?: number; remaining_today?: number;
 };
@@ -199,6 +200,7 @@ export default function Home() {
           role: "assistant",
           content: data.answer,
           response_id: data.response_id,
+          request_id: data.request_id,
           citations: data.citations ?? [],
           evidence: data.evidence ?? [],
           latency_ms: data.latency_ms ?? 0,
@@ -456,7 +458,7 @@ export default function Home() {
           ) : (
             <article className="answerCard" key={message.id}>
               <div className="answerHeader"><div className="sectionLabel">回答</div><span>{(message.latency_ms / 1000).toFixed(1)} 秒</span></div>
-              <div className="answer">{message.content}</div>
+              <div className="answer"><ReactMarkdown>{message.content}</ReactMarkdown></div>
               <div className="sources"><h2>引用来源</h2>
                 {message.citations.length === 0 ? <p>本次回答没有返回文件引用，请谨慎使用。</p> : <ul>
                   {message.citations.map((citation) => <li key={`${citation.file_id}-${citation.filename}`}>{citation.filename}</li>)}
@@ -471,6 +473,7 @@ export default function Home() {
                 <button className={message.feedback === "helpful" ? "selected" : ""} onClick={() => rate(message.id, "helpful")} aria-label="有帮助">👍</button>
                 <button className={message.feedback === "unhelpful" ? "selected" : ""} onClick={() => rate(message.id, "unhelpful")} aria-label="没帮助">👎</button>
                 <span className="cost">估算 ${message.estimated_cost_usd.toFixed(6)}</span>
+                {message.request_id && <span className="requestId" title={message.request_id}>请求 {message.request_id.slice(0, 8)}</span>}
               </div>
             </article>
           ))}
