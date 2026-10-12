@@ -9,9 +9,10 @@ files into answers with inspectable citations. It combines a FastAPI orchestrati
 layer, a Next.js interface, OpenAI Responses + File Search, incremental indexing,
 evaluation, and privacy-conscious local persistence.
 
-> The public portfolio preview uses fictional material and canned answers. It never
-> sends a request to OpenAI and contains no university course files. The real local
-> application uses the same interface with live retrieval.
+> The public portfolio demo is fully interactive: it uses GPT-6 Luna and File Search
+> against five fictional DEMO101 documents. The API key stays server-side, requests
+> are rate-limited, and no university course files are deployed. The local application
+> uses the same interface with private course material.
 
 ![CoursePilot AI chat with a grounded answer and source citation](docs/assets/coursepilot-chat.png)
 
@@ -22,10 +23,22 @@ evaluation, and privacy-conscious local persistence.
 | Grounding | Separate vector stores by course and material type, retrieved evidence, file citations, and explicit refusal instructions |
 | Ingestion | PDF/PPTX/DOCX/TXT/MD discovery, SHA-256 change detection, incremental upload, replacement, deletion, and index preview |
 | Product | Course filters, lecture/tutorial scope, multi-turn history, source inspection, feedback, document management, and responsive UI |
-| Safety | File extension/signature/size/path validation, prompt-injection resistance, bounded retries, and per-client rate limits |
+| Safety | File extension/signature/size/path validation, prompt-injection resistance, bounded retries, per-IP demo limits, and server-only secrets |
 | Evaluation | 13 labelled bilingual cases covering retrieval, concepts, refusals, citations, latency, token usage, and cost |
 | Engineering | Typed API models, 20 backend tests, frontend type checking/build, Docker development, and GitHub Actions CI |
 | Privacy | API keys, raw course files, telemetry, conversations, and remote index state are excluded from Git |
+
+## Public demo safeguards
+
+The deployed demo uses a dedicated fictional vector store and accepts real questions
+through a same-origin Next.js Route Handler. It limits each visitor to five questions
+per day, caps the application at 300 questions per month, bounds question and answer
+length, validates scope, and returns safe errors without logging prompts. Provider-level
+project spend limits remain the final cost boundary because serverless in-memory limits
+can reset when instances are replaced.
+
+The five public source documents are versioned in `frontend/demo-knowledge/`, making
+the demo reproducible and allowing reviewers to verify that citations are genuine.
 
 ## Architecture
 

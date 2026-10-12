@@ -44,6 +44,9 @@ select:focus, textarea:focus, input:focus { outline: 3px solid rgba(255, 90, 54,
 .content { display: grid; gap: 18px; }
 .askCard, .answerCard { padding: 28px; }
 .askCard > label { margin: 0; color: var(--ink); font-family: Georgia, serif; font-size: 25px; }
+.suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.suggestions button { border: 1px solid var(--line); padding: 8px 12px; background: var(--paper); color: var(--forest); font-size: 12px; font-weight: 700; }
+.suggestions button:hover { border-color: var(--accent); background: #fff7ef; }
 .formFooter { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-top: 16px; color: var(--muted); font-size: 12px; }
 button { border: 0; border-radius: 999px; padding: 13px 24px; background: var(--forest); color: white; font: inherit; font-weight: 800; cursor: pointer; }
 button:hover { transform: translateY(-1px); }

@@ -11,7 +11,11 @@ type Message = {
   response_id?: string; citations: Citation[]; evidence: Evidence[]; latency_ms: number;
   estimated_cost_usd: number; feedback?: "helpful" | "unhelpful";
 };
-type Answer = { answer: string; response_id?: string; conversation_id: string; message_id: string };
+type Answer = {
+  answer: string; response_id?: string; conversation_id?: string; message_id: string;
+  citations?: Citation[]; evidence?: Evidence[]; latency_ms?: number;
+  estimated_cost_usd?: number; remaining_today?: number;
+};
 type DocumentRecord = {
   path: string; filename: string; course: string; material_type: "lecture" | "tutorial" | "other";
   size_bytes: number; status: "indexed" | "pending" | "missing";
@@ -25,46 +29,22 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
 const DEMO_COURSES: Course[] = [
-  { course: "DEMO101", lecture_count: 8, tutorial_count: 6, other_count: 0, indexed_count: 14 },
+  { course: "DEMO101", lecture_count: 3, tutorial_count: 2, other_count: 0, indexed_count: 5 },
 ];
-const DEMO_CONVERSATIONS: Conversation[] = [
-  {
-    id: "demo-conversation",
-    title: "为什么 RAG 需要引用来源？",
-    course: "DEMO101",
-    material_type: "lecture",
-    message_count: 2,
-    updated_at: "2026-10-11T00:00:00Z",
-  },
-];
-const DEMO_MESSAGES: Message[] = [
-  {
-    id: "demo-user",
-    conversation_id: "demo-conversation",
-    role: "user",
-    content: "为什么 RAG 系统需要返回引用来源？",
-    citations: [], evidence: [], latency_ms: 0, estimated_cost_usd: 0,
-  },
-  {
-    id: "demo-assistant",
-    conversation_id: "demo-conversation",
-    role: "assistant",
-    content: "引用让使用者能够核对回答是否真正来自指定资料，同时帮助开发者发现检索错误与幻觉。CoursePilot 会同时保留文件引用和检索证据；资料不足时，它会明确拒答，而不是补全未经证实的信息。",
-    citations: [{ filename: "lecture-03-grounded-ai.md", file_id: "demo-file" }],
-    evidence: [{
-      filename: "lecture-03-grounded-ai.md",
-      score: 0.947,
-      text: "A grounded assistant should expose its evidence, distinguish retrieved facts from generated explanations, and abstain when evidence is insufficient.",
-    }],
-    latency_ms: 842,
-    estimated_cost_usd: 0.0031,
-    feedback: "helpful",
-  },
-];
+const DEMO_CONVERSATIONS: Conversation[] = [];
+const DEMO_MESSAGES: Message[] = [];
 const DEMO_DOCUMENTS: DocumentRecord[] = [
-  { path: "DEMO101/lecture/lecture-03-grounded-ai.md", filename: "lecture-03-grounded-ai.md", course: "DEMO101", material_type: "lecture", size_bytes: 18432, status: "indexed" },
-  { path: "DEMO101/tutorial/tutorial-03-evaluation.md", filename: "tutorial-03-evaluation.md", course: "DEMO101", material_type: "tutorial", size_bytes: 12288, status: "indexed" },
-  { path: "DEMO101/lecture/lecture-04-safety.md", filename: "lecture-04-safety.md", course: "DEMO101", material_type: "lecture", size_bytes: 15360, status: "indexed" },
+  { path: "DEMO101/lecture/lecture-01-rag-foundations.md", filename: "lecture-01-rag-foundations.md", course: "DEMO101", material_type: "lecture", size_bytes: 1486, status: "indexed" },
+  { path: "DEMO101/lecture/lecture-02-retrieval-and-citations.md", filename: "lecture-02-retrieval-and-citations.md", course: "DEMO101", material_type: "lecture", size_bytes: 1488, status: "indexed" },
+  { path: "DEMO101/lecture/lecture-03-safety-and-grounding.md", filename: "lecture-03-safety-and-grounding.md", course: "DEMO101", material_type: "lecture", size_bytes: 1457, status: "indexed" },
+  { path: "DEMO101/tutorial/tutorial-01-evaluation-playbook.md", filename: "tutorial-01-evaluation-playbook.md", course: "DEMO101", material_type: "tutorial", size_bytes: 1475, status: "indexed" },
+  { path: "DEMO101/tutorial/tutorial-02-cost-and-observability.md", filename: "tutorial-02-cost-and-observability.md", course: "DEMO101", material_type: "tutorial", size_bytes: 1482, status: "indexed" },
+];
+const DEMO_SUGGESTIONS = [
+  "RAG 和微调有什么区别？",
+  "为什么引用来源很重要？",
+  "如何评估一个 RAG 系统？",
+  "公开 AI Demo 应该怎样控制费用？",
 ];
 
 export default function Home() {
@@ -72,7 +52,7 @@ export default function Home() {
   const [courses, setCourses] = useState<Course[]>(DEMO_MODE ? DEMO_COURSES : []);
   const [documents, setDocuments] = useState<DocumentRecord[]>(DEMO_MODE ? DEMO_DOCUMENTS : []);
   const [conversations, setConversations] = useState<Conversation[]>(DEMO_MODE ? DEMO_CONVERSATIONS : []);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(DEMO_MODE ? DEMO_CONVERSATIONS[0].id : null);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>(DEMO_MODE ? DEMO_MESSAGES : []);
   const [course, setCourse] = useState(DEMO_MODE ? DEMO_COURSES[0].course : "");
   const [materialType, setMaterialType] = useState(DEMO_MODE ? "lecture" : "all");
@@ -85,6 +65,8 @@ export default function Home() {
   const [uploadMaterial, setUploadMaterial] = useState("lecture");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [syncPreview, setSyncPreview] = useState<SyncReport | null>(null);
+  const [demoThreads, setDemoThreads] = useState<Record<string, Message[]>>({});
+  const [remainingToday, setRemainingToday] = useState(5);
 
   async function loadConversations() {
     if (DEMO_MODE) {
@@ -102,7 +84,7 @@ export default function Home() {
       setConversations(DEMO_CONVERSATIONS);
       setCourse(DEMO_COURSES[0].course);
       setUploadCourse(DEMO_COURSES[0].course);
-      setActiveConversationId(DEMO_CONVERSATIONS[0].id);
+      setActiveConversationId(null);
       setMessages(DEMO_MESSAGES);
       return;
     }
@@ -157,7 +139,7 @@ export default function Home() {
   async function openConversation(item: Conversation) {
     setError("");
     if (DEMO_MODE) {
-      setMessages(DEMO_MESSAGES);
+      setMessages(demoThreads[item.id] ?? []);
       setActiveConversationId(item.id);
       setCourse(item.course);
       setMaterialType(item.material_type);
@@ -189,20 +171,62 @@ export default function Home() {
     setLoading(true);
     setError("");
     if (DEMO_MODE) {
-      const conversationId = activeConversationId ?? "demo-live-conversation";
+      const conversationId = activeConversationId ?? `demo-${Date.now()}`;
       const userMessage: Message = {
         id: `demo-user-${Date.now()}`, conversation_id: conversationId, role: "user",
         content: submittedQuestion, citations: [], evidence: [], latency_ms: 0,
         estimated_cost_usd: 0,
       };
-      const assistantMessage: Message = {
-        ...DEMO_MESSAGES[1], id: `demo-assistant-${Date.now()}`,
-        conversation_id: conversationId, feedback: undefined,
-      };
-      setMessages((current) => [...current, userMessage, assistantMessage]);
-      setActiveConversationId(conversationId);
-      setQuestion("");
-      setLoading(false);
+      const pendingMessages = [...messages, userMessage];
+      setMessages(pendingMessages);
+      try {
+        const response = await fetch("/api/demo/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            course,
+            material_type: materialType,
+            question: submittedQuestion,
+            history: messages.map((message) => ({ role: message.role, content: message.content })),
+            website: "",
+          }),
+        });
+        const data = await response.json() as Answer & { detail?: string };
+        if (!response.ok) throw new Error(data.detail ?? "提问失败");
+        const assistantMessage: Message = {
+          id: data.message_id,
+          conversation_id: conversationId,
+          role: "assistant",
+          content: data.answer,
+          response_id: data.response_id,
+          citations: data.citations ?? [],
+          evidence: data.evidence ?? [],
+          latency_ms: data.latency_ms ?? 0,
+          estimated_cost_usd: data.estimated_cost_usd ?? 0,
+        };
+        const completedMessages = [...pendingMessages, assistantMessage];
+        setMessages(completedMessages);
+        setDemoThreads((current) => ({ ...current, [conversationId]: completedMessages }));
+        setConversations((current) => {
+          const existing = current.find((item) => item.id === conversationId);
+          const updated: Conversation = {
+            id: conversationId,
+            title: existing?.title ?? submittedQuestion.slice(0, 36),
+            course,
+            material_type: materialType,
+            message_count: completedMessages.length,
+            updated_at: new Date().toISOString(),
+          };
+          return [updated, ...current.filter((item) => item.id !== conversationId)];
+        });
+        setActiveConversationId(conversationId);
+        setRemainingToday(data.remaining_today ?? remainingToday);
+        setQuestion("");
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "发生未知错误");
+      } finally {
+        setLoading(false);
+      }
       return;
     }
     try {
@@ -220,6 +244,7 @@ export default function Home() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "提问失败");
       const answer = data as Answer;
+      if (!answer.conversation_id) throw new Error("回答缺少对话编号");
       setQuestion("");
       setActiveConversationId(answer.conversation_id);
       const messagesResponse = await fetch(
@@ -238,9 +263,15 @@ export default function Home() {
   async function rate(messageId: string, rating: "helpful" | "unhelpful") {
     setError("");
     if (DEMO_MODE) {
-      setMessages((current) => current.map((message) =>
-        message.id === messageId ? { ...message, feedback: rating } : message,
-      ));
+      setMessages((current) => {
+        const updated = current.map((message) =>
+          message.id === messageId ? { ...message, feedback: rating } : message,
+        );
+        if (activeConversationId) {
+          setDemoThreads((threads) => ({ ...threads, [activeConversationId]: updated }));
+        }
+        return updated;
+      });
       return;
     }
     try {
@@ -376,7 +407,7 @@ export default function Home() {
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>课程问答</button>
           <button className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>资料管理</button>
         </nav>
-        {DEMO_MODE && <div className="demoBanner"><strong>公开展示模式</strong><span>使用虚构资料和示例回答，不调用 OpenAI API，也不包含真实课程文件。</span></div>}
+        {DEMO_MODE && <div className="demoBanner"><strong>真实 AI 演示</strong><span>使用虚构资料实时检索并调用 OpenAI；不包含任何真实课程文件。每位访客每天可提问 5 次。</span></div>}
       </header>
 
       {view === "chat" ? <section className="workspace">
@@ -414,7 +445,9 @@ export default function Home() {
             <div><strong>{selected.tutorial_count}</strong><span>Tutorial</span></div>
             <div><strong>{selected.indexed_count}</strong><span>已索引</span></div>
           </div>}
-          <div className="privacy">聊天和反馈仅保存在本机，不会进入代码仓库。</div>
+          <div className="privacy">{DEMO_MODE
+            ? `问题只用于生成当前回答，不写入项目数据库。今天还可提问 ${remainingToday} 次。`
+            : "聊天和反馈仅保存在本机，不会进入代码仓库。"}</div>
         </aside>
 
         <div className="content">
@@ -444,7 +477,10 @@ export default function Home() {
 
           <form onSubmit={ask} className="askCard">
             <label htmlFor="question">{activeConversationId ? "继续追问" : "你想理解什么？"}</label>
-            <textarea id="question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="例如：解释 Week 3 中的核心模型，并比较它与 Week 2 方法的区别。" rows={5} />
+            {DEMO_MODE && <div className="suggestions" aria-label="示例问题">
+              {DEMO_SUGGESTIONS.map((suggestion) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}
+            </div>}
+            <textarea id="question" maxLength={600} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={DEMO_MODE ? "可以询问 RAG、检索评测、安全与成本控制。" : "例如：解释 Week 3 中的核心模型，并比较它与 Week 2 方法的区别。"} rows={5} />
             <div className="formFooter"><span>回答会附带来源文件</span><button disabled={loading || !course || !question.trim()}>{loading ? "正在检索…" : "开始提问"}</button></div>
           </form>
           {error && <div className="error">{error}</div>}
