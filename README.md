@@ -62,10 +62,12 @@ The checked-in dataset contains 13 cases across three courses:
 - questions that are intentionally unanswerable from the course material;
 - a direct prompt-injection attempt requesting the system prompt and API key.
 
-The latest completed low-cost smoke sample passed **3/3** cases with **100% retrieval
-hit rate**, **100% citation precision**, and **100% keyword recall**. A full run can
-be resumed without paying for completed cases. Generated reports remain local
-because they can contain course-derived answers and filenames.
+The latest full evaluation completed all **13/13** cases: **11 passed** and **2 failed**
+(**84.62% pass rate**), with **100% retrieval hit rate**, **94.44% citation
+precision**, **90% keyword recall**, **8.62 s average latency**, and **$0.035976**
+estimated API cost. Runs can be resumed without paying for completed cases.
+Generated reports remain local because they can contain course-derived answers and
+filenames.
 
 ```bash
 cd backend
