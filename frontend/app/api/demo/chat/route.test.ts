@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHmac } from "node:crypto";
 
 import { POST, resetDemoRateLimitsForTests } from "./route";
 
@@ -32,6 +33,7 @@ const SUCCESS_PAYLOAD = {
 
 function request(
   body: Record<string, unknown> = {
+    engine: "file_search",
     course: "DEMO101",
     question: "How does RAG work?",
     material_type: "lecture",
@@ -69,6 +71,34 @@ beforeEach(() => {
 });
 
 describe("POST /api/demo/chat", () => {
+  it("defaults to the shared hybrid worker and signs the bounded request", async () => {
+    delete process.env.OPENAI_DEMO_VECTOR_STORE_ID;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      answer: "Shared hybrid answer", citations: [{ chunk_id: "public-chunk" }], evidence: [], engine: "hybrid",
+    }));
+    const response = await POST(request({ course: "DEMO101", material_type: "all", question: "What is RAG?" }));
+    expect(response.status).toBe(200);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(/\/api\/rag$/);
+    const headers = options!.headers as Record<string, string>;
+    expect(headers["X-Rag-Signature"]).toBe(createHmac("sha256", "test-salt")
+      .update(`${headers["X-Rag-Timestamp"]}.${options!.body}`).digest("hex"));
+    expect((await response.json()).engine).toBe("hybrid");
+  });
+
+  it("fails closed if the worker signing secret is absent", async () => {
+    delete process.env.DEMO_RATE_LIMIT_SALT;
+    const fetchMock = mockSuccess();
+    const response = await POST(request({ course: "DEMO101", material_type: "all", question: "RAG?" }));
+    expect(response.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed JSON values", async () => {
+    expect((await POST(new Request("http://localhost:3000/api/demo/chat", {
+      method: "POST", headers: { origin: "http://localhost:3000" }, body: "null",
+    }))).status).toBe(400);
+  });
   it("rejects cross-origin requests before calling OpenAI", async () => {
     const fetchMock = mockSuccess();
     const response = await POST(request(undefined, { origin: "https://attacker.example" }));

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -156,13 +156,10 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.OPENAI_API_KEY;
   const vectorStoreId = process.env.OPENAI_DEMO_VECTOR_STORE_ID;
-  if (!apiKey || !vectorStoreId) {
-    return Response.json({ detail: "在线 Demo 正在配置中，请稍后再试。" }, { status: 503 });
-  }
-
   let body: Record<string, unknown>;
   try {
     body = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid body");
   } catch {
     return Response.json({ detail: "请求格式无效。" }, { status: 400 });
   }
@@ -181,6 +178,13 @@ export async function POST(request: Request) {
   }
   if (!(["all", "lecture", "tutorial"] as unknown[]).includes(materialType)) {
     return Response.json({ detail: "资料类型无效。" }, { status: 400 });
+  }
+  const engine = body.engine ?? "hybrid";
+  if (engine !== "hybrid" && engine !== "file_search") {
+    return Response.json({ detail: "检索方式无效。" }, { status: 400 });
+  }
+  if (!apiKey || (engine === "file_search" ? !vectorStoreId : !process.env.DEMO_RATE_LIMIT_SALT)) {
+    return Response.json({ detail: "在线 Demo 正在配置中，请稍后再试。" }, { status: 503 });
   }
 
   const limit = consumeLimit(request);
@@ -207,6 +211,31 @@ export async function POST(request: Request) {
   const requestId = randomUUID();
 
   try {
+    if (engine === "hybrid") {
+      const content = JSON.stringify({ course, material_type: materialType, question, history });
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const signature = createHmac("sha256", process.env.DEMO_RATE_LIMIT_SALT!)
+        .update(`${timestamp}.${content}`).digest("hex");
+      // Configured server destination only; never build an outbound URL from user headers.
+      const workerUrl = process.env.DEMO_RAG_URL
+        || `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL || "coursepilot-ai-ebon.vercel.app"}/api/rag`;
+      const upstream = await fetch(workerUrl, {
+        method: "POST", headers: { "Content-Type": "application/json", "X-Rag-Timestamp": timestamp, "X-Rag-Signature": signature },
+        body: content, signal: AbortSignal.timeout(50_000),
+      });
+      if (!upstream.ok) {
+        refundLimit(limit.key);
+        recordTelemetry({ request_id: requestId, status: "upstream_error", latency_ms: Math.round(performance.now() - started), upstream_status: upstream.status });
+        const response = Response.json({ detail: "AI 服务暂时不可用，请稍后再试。", request_id: requestId }, { status: upstream.status === 429 ? 429 : 502 });
+        const retryAfter = upstream.headers.get("retry-after");
+        if (retryAfter) response.headers.set("Retry-After", retryAfter);
+        return response;
+      }
+      const payload = await upstream.json();
+      const latencyMs = Math.round(performance.now() - started);
+      recordTelemetry({ request_id: requestId, status: "success", latency_ms: latencyMs, citation_count: payload.citations?.length || 0, estimated_cost_usd: payload.estimated_cost_usd });
+      return Response.json({ ...payload, request_id: requestId, message_id: randomUUID(), latency_ms: latencyMs, remaining_today: limit.ipRemaining });
+    }
     const upstream = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {

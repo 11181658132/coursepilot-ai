@@ -7,9 +7,10 @@
 1. The Next.js client sends a question with an explicit course and material scope.
 2. The local application uses FastAPI; the public demo uses a same-origin Next.js
    Route Handler. Both validate the request and apply a per-client rate limit.
-3. The knowledge-base service selects only vector stores that match that scope.
-4. The Responses API calls File Search and returns generated text, citations,
-   retrieved evidence, token usage, and latency.
+3. Hybrid mode filters SQLite chunks by scope, runs BM25/vector fusion and optional
+   LLM reranking. The hosted baseline selects only matching vector stores.
+4. The Responses API generates an answer from retrieved passages (hybrid) or calls
+   File Search (baseline), returning citations, evidence, token usage, and latency.
 5. FastAPI stores local exchanges and optional feedback in SQLite. The public demo
    keeps conversation state in the browser and emits only structured operational
    telemetry: request IDs, status, latency, token counts, tool calls, citation count,
@@ -22,7 +23,8 @@
 ### Self-managed hybrid engine
 
 `HybridKnowledgeBase` is selected by the local client's `engine=hybrid` request or
-the CLI's `--engine hybrid` option. The hosted engine remains the default baseline.
+the CLI's `--engine hybrid` option. The public demo defaults to hybrid; the local
+client preserves its hosted baseline default and supports switching engines.
 
 - `parsing.py` extracts PDF pages and PPTX slides, including slide tables; every chunk
   stays within one source location. DOCX and text use sections because they do not
@@ -47,8 +49,12 @@ the CLI's `--engine hybrid` option. The hosted engine remains the default baseli
 
 This intentionally targets a small, single-user course corpus. It does not implement
 OCR, ANN indexing, or multi-tenant source authorization. The public Vercel demo
-continues to use the hosted route; exposing private source endpoints needs a separate
-authenticated backend deployment.
+reuses the same Python core via a signed Python Function behind its Next.js limits.
+A CI-verified allowlisted bundle mirrors the canonical `backend/app` modules.
+Only five versioned fictional files and their precomputed embeddings are deployed;
+cold starts hydrate temporary SQLite without document embedding calls. Public source
+inspection/download routes resolve IDs exclusively inside that fictional index.
+Exposing private source endpoints still requires a separate authenticated deployment.
 
 ### Hosted baseline
 

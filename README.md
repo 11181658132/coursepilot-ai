@@ -9,9 +9,10 @@ files into answers with inspectable citations. It combines a FastAPI orchestrati
 layer, a Next.js interface, OpenAI Responses + File Search, incremental indexing,
 evaluation, and privacy-conscious local persistence. The local application now also
 includes a self-managed hybrid RAG engine with page/slide citations, alongside the
-hosted File Search baseline. The public Vercel demo continues to use File Search.
+hosted File Search baseline. The public Vercel demo now defaults to the same Python
+hybrid retrieval and citation core, with File Search available as a baseline.
 
-> The public portfolio demo is fully interactive: it uses GPT-6 Luna and File Search
+> The public portfolio demo is fully interactive: it uses GPT-6 Luna and hybrid RAG
 > against five fictional DEMO101 documents. The API key stays server-side, requests
 > are rate-limited, and no university course files are deployed. The local application
 > uses the same interface with private course material.
@@ -27,12 +28,13 @@ hosted File Search baseline. The public Vercel demo continues to use File Search
 | Product | Course filters, lecture/tutorial scope, multi-turn history, source inspection, feedback, document management, and responsive UI |
 | Safety | File extension/signature/size/path validation, prompt-injection resistance, bounded retries, per-IP demo limits, and server-only secrets |
 | Evaluation | 13 labelled bilingual cases covering retrieval, concepts, refusals, citations, latency, token usage, and cost |
-| Engineering | Typed API models, 42 backend tests, 7 public-route tests, frontend type checking/build, Docker development, and GitHub Actions CI |
+| Engineering | Typed API models, backend and public-route tests, frontend type checking/build, shared-core drift checks, Docker development, and GitHub Actions CI |
 | Privacy | API keys, raw course files, telemetry, conversations, and remote index state are excluded from Git |
 
 ## Public demo safeguards
 
-The deployed demo uses a dedicated fictional vector store and accepts real questions
+The deployed demo uses a precomputed fictional hybrid index (and a dedicated fictional
+vector store for the optional File Search baseline), and accepts real questions
 through a same-origin Next.js Route Handler. It limits each visitor to five questions
 per day, caps the application at 300 questions per month, bounds question and answer
 length, validates scope, and returns safe errors without logging prompts. Provider-level
@@ -45,6 +47,10 @@ evidence, API keys, and client IPs are never logged.
 
 The five public source documents are versioned in `frontend/demo-knowledge/`, making
 the demo reproducible and allowing reviewers to verify that citations are genuine.
+Hybrid citations expose the source passage and downloadable fictional original.
+The Python worker requires a short-lived HMAC signature from the rate-limited route;
+direct unsigned worker calls are rejected. Only the explicitly allowlisted RAG modules
+are bundled: no private corpus, databases, environment files, or telemetry are copied.
 
 ## Architecture
 
@@ -219,13 +225,28 @@ OpenAI vector store and can incur API storage/processing charges.
 The frontend includes an explicit read-only mode for public deployment. It uses
 five versioned fictional files, disables destructive document operations, and sends
 questions to a same-origin server Route Handler. That handler keeps the API key on
-the server, scopes File Search to `DEMO101`, validates input, applies request limits,
-and returns real citations and retrieved evidence.
+the server, scopes both engines to `DEMO101`, validates input, applies request limits,
+and returns real citations and retrieved evidence. Hybrid mode uses a Python Vercel
+Function with the canonical backend's BM25/vector fusion, LLM reranker, and verified
+quotation pipeline. It does not need an additional paid backend server.
+
+`backend/app` is authoritative. After changing its RAG modules, regenerate the
+deployment bundle with `node frontend/scripts/prepare-rag.mjs`; CI fails on drift.
+`frontend/demo-index.json` contains only embeddings/chunks from the five fictional
+sources. To rebuild it, run `PYTHONPATH=backend .venv/bin/python
+backend/scripts/export_demo_index.py` from the repository root (uses the configured
+embedding API; never reads private course folders). Cold starts rehydrate this
+index into temporary SQLite without re-embedding documents.
 
 ```bash
 cd frontend
 NEXT_PUBLIC_DEMO_MODE=true npm run dev
 ```
+
+Local Next.js-only development cannot run the Python function automatically: also
+serve `frontend/api/rag.py` with Python's HTTPServer and configure `DEMO_RAG_URL`
+to that trusted local worker URL, using the same `DEMO_RATE_LIMIT_SALT` on both.
+Vercel discovers `api/rag.py` automatically alongside Next.js.
 
 For a Vercel deployment, set the project root to `frontend` and add:
 

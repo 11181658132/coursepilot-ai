@@ -71,7 +71,7 @@ export default function Home() {
   const [syncPreview, setSyncPreview] = useState<SyncReport | null>(null);
   const [demoThreads, setDemoThreads] = useState<Record<string, Message[]>>({});
   const [remainingToday, setRemainingToday] = useState(5);
-  const [engine, setEngine] = useState<"file_search" | "hybrid">("file_search");
+  const [engine, setEngine] = useState<"file_search" | "hybrid">(DEMO_MODE ? "hybrid" : "file_search");
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
 
@@ -192,6 +192,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             course,
+            engine,
             material_type: materialType,
             question: submittedQuestion,
             history: messages.map((message) => ({ role: message.role, content: message.content })),
@@ -415,7 +416,7 @@ export default function Home() {
     setSourceLoading(true);
     setError("");
     try {
-      const response = await fetch(`${API_URL}/api/sources/${encodeURIComponent(citation.chunk_id)}`);
+      const response = await fetch(`${DEMO_MODE ? "/api/demo" : `${API_URL}/api`}/sources/${encodeURIComponent(citation.chunk_id)}`);
       if (!response.ok) throw new Error("原文已变化或删除，请重新建立索引。");
       setSourcePreview(await response.json());
     } catch (reason) {
@@ -435,7 +436,7 @@ export default function Home() {
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>课程问答</button>
           <button className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>资料管理</button>
         </nav>
-        {!DEMO_MODE && <label className="enginePicker">检索方式
+        <label className="enginePicker">检索方式
           <select value={engine} disabled={loading || documentLoading} onChange={(event) => {
             setEngine(event.target.value as "file_search" | "hybrid");
             newConversation(); setSyncPreview(null); setNotice(""); setSourcePreview(null);
@@ -443,8 +444,8 @@ export default function Home() {
             <option value="file_search">File Search · 基线</option>
             <option value="hybrid">自建 RAG · 混合检索与重排序</option>
           </select>
-          {engine === "hybrid" && <span>首次使用请在资料管理中建立混合索引，问答引用可展开原文。</span>}
-        </label>}
+          {engine === "hybrid" && <span>{DEMO_MODE ? "与本地共用 Python 核心：BM25 + 向量检索、重排序，引用可展开原文。" : "首次使用请在资料管理中建立混合索引，问答引用可展开原文。"}</span>}
+        </label>
         {DEMO_MODE && <div className="demoBanner"><strong>真实 AI 演示</strong><span>使用虚构资料实时检索并调用 OpenAI；不包含任何真实课程文件。每位访客每天可提问 5 次。</span></div>}
       </header>
 
@@ -588,7 +589,7 @@ export default function Home() {
           <button className="secondaryButton" autoFocus onClick={() => setSourcePreview(null)}>关闭原文</button>
           <h2>{sourcePreview.filename}</h2><p>{sourceLocation(sourcePreview)}</p>
           <pre>{sourcePreview.text}</pre>
-          <a href={`${API_URL}/api/sources/${sourcePreview.chunk_id}/file${sourcePreview.locator_type === "page" ? `#page=${sourcePreview.page}` : ""}`} target="_blank" rel="noreferrer">{sourcePreview.locator_type === "page" ? "打开 PDF 对应页" : "下载源文件"}</a>
+          <a href={`${DEMO_MODE ? "/api/demo" : `${API_URL}/api`}/sources/${sourcePreview.chunk_id}/file${sourcePreview.locator_type === "page" ? `#page=${sourcePreview.page}` : ""}`} target="_blank" rel="noreferrer">{sourcePreview.locator_type === "page" ? "打开 PDF 对应页" : "下载源文件"}</a>
         </section>
       </div>}
     </main>

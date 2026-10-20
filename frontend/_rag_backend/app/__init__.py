@@ -1,0 +1,1 @@
+"""CoursePilot AI backend package."""
