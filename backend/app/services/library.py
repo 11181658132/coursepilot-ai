@@ -48,6 +48,10 @@ def discover_documents(root: Path) -> List[Document]:
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
+        try:
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
+            continue
         relative = path.relative_to(root)
         if len(relative.parts) < 2 or relative.name.startswith("~$"):
             continue

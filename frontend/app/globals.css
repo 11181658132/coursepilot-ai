@@ -80,6 +80,15 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .sources h2 { font-size: 14px; }
 .sources ul { padding-left: 20px; }
 .sources li { margin: 7px 0; color: var(--forest); }
+.enginePicker { max-width: 440px; }
+.enginePicker > span { font-weight: 400; line-height: 1.6; }
+.sourceLink { padding: 0; border-radius: 0; background: none; color: var(--forest); text-align: left; text-decoration: underline; line-height: 1.6; }
+.sources blockquote { margin: 10px 0; padding-left: 14px; border-left: 3px solid var(--line); color: var(--muted); font-size: 14px; white-space: pre-wrap; }
+.sourceOverlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: #17201899; }
+.sourceDialog { width: min(800px, 100%); max-height: 85vh; overflow: auto; padding: 28px; border-radius: 20px; background: var(--panel); }
+.sourceDialog h2 { overflow-wrap: anywhere; }
+.sourceDialog pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.8; }
+.sourceDialog a { color: var(--forest); }
 details { margin-top: 24px; }
 summary { cursor: pointer; color: var(--muted); font-weight: 700; }
 .evidence { margin-top: 14px; padding: 16px; border-radius: 12px; background: var(--paper); }

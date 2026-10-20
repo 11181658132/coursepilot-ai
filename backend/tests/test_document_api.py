@@ -26,6 +26,7 @@ class DocumentApiTests(unittest.TestCase):
             index_state_path=root / "state.json",
             telemetry_path=root / "events.jsonl",
             conversation_db_path=root / "conversations.db",
+            rag_db_path=root / "rag.sqlite3",
         )
         self.knowledge_base = FakeKnowledgeBase()
         app.dependency_overrides[get_settings] = lambda: self.settings

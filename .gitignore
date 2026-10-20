@@ -8,6 +8,7 @@ __pycache__/
 backend/data/index_state.json
 backend/data/chat_events.jsonl
 backend/data/coursepilot.db
+backend/data/*.sqlite3*
 backend/data/demo_store.json
 evals/reports/
 frontend/.next/

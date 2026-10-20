@@ -4,8 +4,10 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
 type Course = { course: string; lecture_count: number; tutorial_count: number; other_count: number; indexed_count: number };
-type Citation = { filename: string; file_id?: string };
-type Evidence = { filename: string; score?: number; text: string };
+type Source = { chunk_id?: string; path?: string; page?: number; locator_type?: "page" | "slide" | "section"; week?: number; source_id?: string };
+type Citation = Source & { filename: string; file_id?: string; quote?: string };
+type Evidence = Source & { filename: string; score?: number; text: string; bm25_score?: number; vector_score?: number; rerank_score?: number };
+type SourcePreview = Source & { filename: string; text: string };
 type Conversation = { id: string; title: string; course: string; material_type: string; message_count: number; updated_at: string };
 type Message = {
   id: string; conversation_id: string; role: "user" | "assistant"; content: string;
@@ -24,6 +26,7 @@ type DocumentRecord = {
 type SyncReport = {
   uploaded: number; replaced: number; skipped: number; failed: number;
   errors: string[];
+  removed?: number; chunk_count?: number; estimated_cost_usd?: number;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -68,6 +71,9 @@ export default function Home() {
   const [syncPreview, setSyncPreview] = useState<SyncReport | null>(null);
   const [demoThreads, setDemoThreads] = useState<Record<string, Message[]>>({});
   const [remainingToday, setRemainingToday] = useState(5);
+  const [engine, setEngine] = useState<"file_search" | "hybrid">("file_search");
+  const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
 
   async function loadConversations() {
     if (DEMO_MODE) {
@@ -90,7 +96,7 @@ export default function Home() {
       return;
     }
     Promise.all([
-      fetch(`${API_URL}/api/courses`).then((response) => {
+      fetch(`${API_URL}/api/courses?engine=${engine}`).then((response) => {
         if (!response.ok) throw new Error("无法读取课程列表");
         return response.json() as Promise<Course[]>;
       }),
@@ -108,7 +114,7 @@ export default function Home() {
         }
       })
       .catch((reason: Error) => setError(reason.message));
-  }, []);
+  }, [engine]);
 
   async function refreshLibrary() {
     if (DEMO_MODE) {
@@ -117,8 +123,8 @@ export default function Home() {
       return;
     }
     const [courseResponse, documentResponse] = await Promise.all([
-      fetch(`${API_URL}/api/courses`),
-      fetch(`${API_URL}/api/documents`),
+      fetch(`${API_URL}/api/courses?engine=${engine}`),
+      fetch(`${API_URL}/api/documents?engine=${engine}`),
     ]);
     if (!courseResponse.ok || !documentResponse.ok) throw new Error("无法读取资料列表");
     const courseData = await courseResponse.json() as Course[];
@@ -130,7 +136,7 @@ export default function Home() {
   useEffect(() => {
     if (view !== "documents") return;
     refreshLibrary().catch((reason: Error) => setError(reason.message));
-  }, [view]);
+  }, [view, engine]);
 
   const selected = useMemo(
     () => courses.find((item) => item.course === course),
@@ -240,7 +246,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           course, material_type: materialType, question: submittedQuestion,
-          conversation_id: activeConversationId, previous_response_id: previousResponseId,
+          conversation_id: activeConversationId, previous_response_id: previousResponseId, engine,
         }),
       });
       const data = await response.json();
@@ -334,7 +340,7 @@ export default function Home() {
     setError("");
     setNotice("");
     try {
-      const response = await fetch(`${API_URL}/api/sync/preview`, { method: "POST" });
+      const response = await fetch(`${API_URL}/api/sync/preview?engine=${engine}`, { method: "POST" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "检查失败");
       setSyncPreview(data);
@@ -354,10 +360,10 @@ export default function Home() {
     setError("");
     setNotice("");
     try {
-      const response = await fetch(`${API_URL}/api/sync`, { method: "POST" });
+      const response = await fetch(`${API_URL}/api/sync?engine=${engine}`, { method: "POST" });
       const data = await response.json() as SyncReport & { detail?: string };
       if (!response.ok) throw new Error(data.detail ?? "索引失败");
-      setNotice(`索引完成：新增 ${data.uploaded}，替换 ${data.replaced}，跳过 ${data.skipped}。`);
+      setNotice(`索引完成：新增 ${data.uploaded}，替换 ${data.replaced}，跳过 ${data.skipped}，失败 ${data.failed}。${engine === "hybrid" ? ` 本次创建 ${data.chunk_count ?? 0} 个片段，估算费用 $${(data.estimated_cost_usd ?? 0).toFixed(6)}。` : ""}`);
       setSyncPreview(null);
       await refreshLibrary();
     } catch (reason) {
@@ -399,6 +405,26 @@ export default function Home() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  function sourceLocation(source: Source) {
+    const label = source.locator_type === "slide" ? "幻灯片" : source.locator_type === "page" ? "页" : "节";
+    return source.page ? ` · 第 ${source.page} ${label}${source.week ? ` · Week ${source.week}` : ""}` : "";
+  }
+
+  async function inspectSource(citation: Citation) {
+    if (!citation.chunk_id) return;
+    setSourceLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_URL}/api/sources/${encodeURIComponent(citation.chunk_id)}`);
+      if (!response.ok) throw new Error("原文已变化或删除，请重新建立索引。");
+      setSourcePreview(await response.json());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法打开原文");
+    } finally {
+      setSourceLoading(false);
+    }
+  }
+
   return (
     <main>
       <header className="hero">
@@ -409,6 +435,16 @@ export default function Home() {
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>课程问答</button>
           <button className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>资料管理</button>
         </nav>
+        {!DEMO_MODE && <label className="enginePicker">检索方式
+          <select value={engine} disabled={loading || documentLoading} onChange={(event) => {
+            setEngine(event.target.value as "file_search" | "hybrid");
+            newConversation(); setSyncPreview(null); setNotice(""); setSourcePreview(null);
+          }}>
+            <option value="file_search">File Search · 基线</option>
+            <option value="hybrid">自建 RAG · 混合检索与重排序</option>
+          </select>
+          {engine === "hybrid" && <span>首次使用请在资料管理中建立混合索引，问答引用可展开原文。</span>}
+        </label>}
         {DEMO_MODE && <div className="demoBanner"><strong>真实 AI 演示</strong><span>使用虚构资料实时检索并调用 OpenAI；不包含任何真实课程文件。每位访客每天可提问 5 次。</span></div>}
       </header>
 
@@ -461,12 +497,17 @@ export default function Home() {
               <div className="answer"><ReactMarkdown>{message.content}</ReactMarkdown></div>
               <div className="sources"><h2>引用来源</h2>
                 {message.citations.length === 0 ? <p>本次回答没有返回文件引用，请谨慎使用。</p> : <ul>
-                  {message.citations.map((citation) => <li key={`${citation.file_id}-${citation.filename}`}>{citation.filename}</li>)}
+                  {message.citations.map((citation) => <li key={citation.chunk_id ?? `${citation.file_id}-${citation.filename}`}>
+                    {citation.chunk_id ? <button className="sourceLink" disabled={sourceLoading} onClick={() => inspectSource(citation)}>
+                      [{citation.source_id}] {citation.filename}{sourceLocation(citation)} · 查看原文
+                    </button> : citation.filename}
+                    {citation.quote && <blockquote>{citation.quote}</blockquote>}
+                  </li>)}
                 </ul>}
               </div>
               {message.evidence.length > 0 && <details><summary>查看检索证据</summary>
                 {message.evidence.map((item, index) => <div className="evidence" key={`${item.filename}-${index}`}>
-                  <strong>{item.filename}</strong>{item.score !== undefined && <span>相关度 {item.score.toFixed(3)}</span>}<p>{item.text}</p>
+                  <strong>{item.filename}{sourceLocation(item)}</strong>{item.rerank_score != null ? <span>重排序评分 {item.rerank_score}/3</span> : item.score != null && <span>检索得分 {item.score.toFixed(3)}</span>}<p>{item.text}</p>
                 </div>)}
               </details>}
               <div className="feedbackRow"><span>这个回答有帮助吗？</span>
@@ -513,8 +554,8 @@ export default function Home() {
         </form>
 
         {syncPreview && <div className="syncCard">
-          <div><strong>索引预览</strong><span>新增 {syncPreview.uploaded} · 替换 {syncPreview.replaced} · 已是最新 {syncPreview.skipped}</span></div>
-          <button onClick={runIndex} disabled={documentLoading || (syncPreview.uploaded + syncPreview.replaced === 0)}>
+          <div><strong>索引预览</strong><span>新增 {syncPreview.uploaded} · 替换 {syncPreview.replaced} · 已是最新 {syncPreview.skipped} · 移除缺失索引 {syncPreview.removed ?? 0}</span></div>
+          <button onClick={runIndex} disabled={documentLoading || (syncPreview.uploaded + syncPreview.replaced + (syncPreview.removed ?? 0) === 0)}>
             {documentLoading ? "正在索引…" : "开始索引"}
           </button>
         </div>}
@@ -533,6 +574,23 @@ export default function Home() {
           {documents.length === 0 && <p className="emptyDocuments">知识库里还没有资料。</p>}
         </div>
       </section>}
+      {sourcePreview && <div className="sourceOverlay" onClick={() => setSourcePreview(null)}>
+        <section className="sourceDialog" role="dialog" aria-modal="true" aria-label="引用原文" tabIndex={-1}
+          onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
+            if (event.key === "Escape") setSourcePreview(null);
+            if (event.key === "Tab") {
+              const controls = event.currentTarget.querySelectorAll<HTMLElement>("button, a");
+              const first = controls[0]; const last = controls[controls.length - 1];
+              if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+              else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+            }
+          }}>
+          <button className="secondaryButton" autoFocus onClick={() => setSourcePreview(null)}>关闭原文</button>
+          <h2>{sourcePreview.filename}</h2><p>{sourceLocation(sourcePreview)}</p>
+          <pre>{sourcePreview.text}</pre>
+          <a href={`${API_URL}/api/sources/${sourcePreview.chunk_id}/file${sourcePreview.locator_type === "page" ? `#page=${sourcePreview.page}` : ""}`} target="_blank" rel="noreferrer">{sourcePreview.locator_type === "page" ? "打开 PDF 对应页" : "下载源文件"}</a>
+        </section>
+      </div>}
     </main>
   );
 }

@@ -7,7 +7,9 @@
 CoursePilot AI is a grounded course knowledge base that turns lecture and tutorial
 files into answers with inspectable citations. It combines a FastAPI orchestration
 layer, a Next.js interface, OpenAI Responses + File Search, incremental indexing,
-evaluation, and privacy-conscious local persistence.
+evaluation, and privacy-conscious local persistence. The local application now also
+includes a self-managed hybrid RAG engine with page/slide citations, alongside the
+hosted File Search baseline. The public Vercel demo continues to use File Search.
 
 > The public portfolio demo is fully interactive: it uses GPT-6 Luna and File Search
 > against five fictional DEMO101 documents. The API key stays server-side, requests
@@ -25,7 +27,7 @@ evaluation, and privacy-conscious local persistence.
 | Product | Course filters, lecture/tutorial scope, multi-turn history, source inspection, feedback, document management, and responsive UI |
 | Safety | File extension/signature/size/path validation, prompt-injection resistance, bounded retries, per-IP demo limits, and server-only secrets |
 | Evaluation | 13 labelled bilingual cases covering retrieval, concepts, refusals, citations, latency, token usage, and cost |
-| Engineering | Typed API models, 20 backend tests, 7 public-route tests, frontend type checking/build, Docker development, and GitHub Actions CI |
+| Engineering | Typed API models, 42 backend tests, 7 public-route tests, frontend type checking/build, Docker development, and GitHub Actions CI |
 | Privacy | API keys, raw course files, telemetry, conversations, and remote index state are excluded from Git |
 
 ## Public demo safeguards
@@ -129,6 +131,73 @@ Open <http://localhost:3000>. Interactive backend documentation is available at
 
 ## Index documents
 
+### Self-managed hybrid RAG
+
+Select **自建 RAG · 混合检索与重排序** in the local UI, open **资料管理**, preview
+the changes, and build the index. The engine selection applies to indexing,
+inventory, and questions. Existing File Search indexes remain available as a baseline.
+
+The self-managed pipeline implements:
+
+1. PDF page text, PPTX slide text and tables, DOCX sections, and UTF-8 text extraction.
+2. Page/slide-local chunks (1,600 characters, 200-character overlap by default),
+   with course, material type, inferred week, source location, and stable chunk IDs.
+3. `text-embedding-3-small` embeddings stored in local SQLite, BM25 keyword scoring,
+   exact cosine vector search, and reciprocal rank fusion of the top candidates.
+4. An optional LLM reranker scoring each candidate from 0 to 3; only useful or direct
+   evidence reaches generation when reranking is enabled.
+5. Structured answers with server-validated passage IDs and verbatim supporting quotes.
+   Clicking a citation opens the indexed original passage, and PDFs open at the cited page.
+
+Previewing scans local hashes only and makes no API calls. Building the hybrid index
+sends extracted text to the configured OpenAI embeddings API; queries send their text
+to that API and selected passages to the configured generation model. The local
+database is excluded from Git. Do not enable this on a shared/public backend without
+authentication and document-level access controls.
+
+```bash
+cd backend
+python -m app.cli sync --engine hybrid --dry-run
+python -m app.cli sync --engine hybrid
+```
+
+Select the engine in the UI, or set `RAG_ENGINE=hybrid` for backend/CLI defaults.
+The UI explicitly sends the selected engine. `RAG_RERANK=false` disables the reranker
+for ablation runs. Embeddings, reranking, and generation all contribute to the cost
+estimate; pricing remains configurable. The per-run embedding token budget uses the
+UTF-8 byte count as a conservative token upper bound before sending each document.
+An unchanged document is skipped; changed documents are replaced atomically, and
+missing files are pruned. Failed replacements retain the old index but changed or
+deleted source content cannot be retrieved until reindexed.
+
+The following small live smoke test uses only the five fictional public documents
+and removes its temporary local index afterwards:
+
+```bash
+cd backend
+PYTHONPATH=. python scripts/smoke_hybrid.py
+```
+
+### Compare with the File Search baseline
+
+Run the same dataset with separately stored reports (each run incurs API charges):
+
+```bash
+cd backend
+python -m app.cli eval --engine file_search --output-dir ../evals/reports/baseline
+python -m app.cli eval --engine hybrid --output-dir ../evals/reports/hybrid
+python -m app.cli eval --engine hybrid --no-rerank --output-dir ../evals/reports/hybrid-no-rerank
+```
+
+No quality improvement is claimed until these comparisons are run. The existing
+13-case evaluator is a file-level proxy: its legacy retrieval hit metric counts
+expected files found in citations or evidence, citation precision checks expected
+filenames, and keyword recall checks substrings. It does not measure passage recall
+or semantic entailment. The historical evaluation above describes the hosted baseline,
+not the new hybrid engine.
+
+### Hosted File Search indexing
+
 Previewing is local and free:
 
 ```bash
@@ -197,8 +266,14 @@ GitHub Actions repeats these checks on every push and pull request.
 ## Design decisions and limitations
 
 - Hosted File Search made the first reliable baseline fast to build. A pgvector
-  implementation would provide more control over chunking, hybrid retrieval, and
-  reranking and is the next retrieval experiment.
+  migration can replace the self-managed engine's exact cosine scan when the corpus
+  outgrows local SQLite. BM25, fusion, chunking, and reranking are already inspectable
+  application code, not delegated to File Search.
+- Image-only scans require OCR and are reported as indexing failures, rather than
+  producing empty evidence. DOCX/TXT/MD use section locations, not fabricated pages.
+- Quote validation checks that quoted text exists in the cited chunk. It does not
+  establish that every generated claim is supported by that quote. This needs an
+  expanded, human-reviewed evaluation set.
 - Conversation history is intentionally local-first. A multi-user deployment
   needs authentication, PostgreSQL, tenant isolation, migrations, and backups.
 - Public inference is isolated from private course data: it uses a dedicated OpenAI
@@ -208,7 +283,7 @@ GitHub Actions repeats these checks on every push and pull request.
 
 ## Roadmap
 
-1. Compare hosted File Search with PostgreSQL/pgvector hybrid retrieval and reranking.
-2. Add page-level PDF extraction and page citations.
+1. Benchmark hosted File Search against hybrid retrieval, with/without reranking.
+2. Add OCR and visual/table parsing for material that lacks extractable text.
 3. Calibrate a model-graded faithfulness metric against human labels.
 4. Add authentication, tenant isolation, durable cloud storage, and observability.

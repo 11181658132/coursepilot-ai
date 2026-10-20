@@ -4,6 +4,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 MaterialType = Literal["lecture", "tutorial", "other", "all"]
+RetrievalEngine = Literal["file_search", "hybrid"]
 
 
 class CourseSummary(BaseModel):
@@ -52,6 +53,10 @@ class SyncReport(BaseModel):
     failed: int = 0
     changes: List[SyncChange] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
+    removed: int = 0
+    chunk_count: int = 0
+    embedding_tokens: int = 0
+    estimated_cost_usd: float = 0.0
 
 
 class ChatRequest(BaseModel):
@@ -60,17 +65,32 @@ class ChatRequest(BaseModel):
     question: str = Field(min_length=2, max_length=4000)
     previous_response_id: Optional[str] = None
     conversation_id: Optional[str] = None
+    engine: Optional[RetrievalEngine] = None
 
 
-class Citation(BaseModel):
+class SourceLocation(BaseModel):
+    chunk_id: Optional[str] = None
+    path: Optional[str] = None
+    page: Optional[int] = None
+    locator_type: Optional[Literal["page", "slide", "section"]] = None
+    week: Optional[int] = None
+
+
+class Citation(SourceLocation):
     filename: str
     file_id: Optional[str] = None
+    source_id: Optional[str] = None
+    quote: str = ""
 
 
-class Evidence(BaseModel):
+class Evidence(SourceLocation):
     filename: str
     score: Optional[float] = None
     text: str = ""
+    source_id: Optional[str] = None
+    bm25_score: Optional[float] = None
+    vector_score: Optional[float] = None
+    rerank_score: Optional[float] = None
 
 
 class ChatResponse(BaseModel):

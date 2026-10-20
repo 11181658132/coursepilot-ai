@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +25,15 @@ class Settings(BaseSettings):
     admin_requests_per_minute: int = 30
     openai_max_retries: int = 2
     openai_timeout_seconds: float = 60.0
+    rag_engine: Literal["file_search", "hybrid"] = "file_search"
+    rag_db_path: Path = PROJECT_ROOT / "backend/data/rag.sqlite3"
+    rag_embedding_model: str = "text-embedding-3-small"
+    rag_embedding_cost_per_million: float = 0.02
+    rag_candidate_count: int = Field(default=12, ge=1, le=24)
+    rag_rerank: bool = True
+    rag_chunk_chars: int = Field(default=1600, ge=100, le=2000)
+    rag_chunk_overlap: int = Field(default=200, ge=0)
+    rag_index_max_embedding_tokens: int = Field(default=5_000_000, ge=1)
 
     model_config = SettingsConfigDict(
         env_file=(PROJECT_ROOT / ".env", ".env"),
@@ -31,7 +41,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    @field_validator("index_state_path", mode="after")
+    @field_validator("index_state_path", "rag_db_path", mode="after")
     @classmethod
     def resolve_state_path(cls, value: Path) -> Path:
         return value if value.is_absolute() else PROJECT_ROOT / value

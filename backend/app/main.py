@@ -1,7 +1,9 @@
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.config import Settings, get_settings
 from app.models import (
@@ -15,6 +17,7 @@ from app.models import (
     DocumentRecord,
     FeedbackRequest,
     FeedbackResponse,
+    RetrievalEngine,
     SyncChange,
     SyncReport,
     UploadResponse,
@@ -26,6 +29,7 @@ from app.services.documents import (
     resolve_document_path,
     save_upload,
 )
+from app.services.hybrid_kb import HybridKnowledgeBase
 from app.services.library import discover_documents, summarize_courses
 from app.services.openai_kb import OpenAIKnowledgeBase
 from app.services.rate_limit import SlidingWindowRateLimiter
@@ -77,6 +81,16 @@ def get_chat_store(config: Settings = Depends(get_settings)) -> ChatStore:
     return ChatStore(config.conversation_db_path)
 
 
+def get_hybrid_base(config: Settings = Depends(get_settings)) -> HybridKnowledgeBase:
+    return HybridKnowledgeBase(config)
+
+
+def index_state(config: Settings, engine: RetrievalEngine) -> dict:
+    if engine == "hybrid":
+        return {"files": HybridKnowledgeBase(config).manifest()}
+    return load_state(config.index_state_path)
+
+
 def _client_key(request: Request) -> str:
     return request.client.host if request.client else "local"
 
@@ -111,15 +125,17 @@ def health(config: Settings = Depends(get_settings)) -> dict:
 
 
 @app.get("/api/courses", response_model=list[CourseSummary])
-def courses(config: Settings = Depends(get_settings)) -> list[dict]:
+def courses(config: Settings = Depends(get_settings),
+            engine: Optional[RetrievalEngine] = None) -> list[dict]:
     documents = discover_documents(config.knowledge_base_dir)
-    state = load_state(config.index_state_path)
+    state = index_state(config, engine or config.rag_engine)
     return summarize_courses(documents, state["files"].keys())
 
 
 @app.get("/api/documents", response_model=list[DocumentRecord])
-def documents(config: Settings = Depends(get_settings)) -> list[dict]:
-    state = load_state(config.index_state_path)
+def documents(config: Settings = Depends(get_settings),
+              engine: Optional[RetrievalEngine] = None) -> list[dict]:
+    state = index_state(config, engine or config.rag_engine)
     return list_documents(config.knowledge_base_dir, state)
 
 
@@ -176,12 +192,14 @@ def delete_document(
     request: DeleteDocumentRequest,
     config: Settings = Depends(get_settings),
     knowledge_base: OpenAIKnowledgeBase = Depends(get_knowledge_base),
+    hybrid_base: HybridKnowledgeBase = Depends(get_hybrid_base),
 ) -> DeleteDocumentResponse:
     try:
         target = resolve_document_path(config.knowledge_base_dir, request.path)
     except DocumentValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     index_deleted = knowledge_base.delete_document(request.path)
+    index_deleted = hybrid_base.delete_document(request.path) or index_deleted
     local_deleted = False
     if target.is_file():
         target.unlink()
@@ -198,9 +216,12 @@ def delete_document(
 @app.post("/api/sync/preview", response_model=SyncReport)
 def preview_sync(
     config: Settings = Depends(get_settings),
+    engine: Optional[RetrievalEngine] = None,
 ) -> SyncReport:
     if not config.knowledge_base_dir.is_dir():
         raise HTTPException(status_code=404, detail="Knowledge base directory not found")
+    if (engine or config.rag_engine) == "hybrid":
+        return HybridKnowledgeBase(config).sync(config.knowledge_base_dir, dry_run=True)
     state = load_state(config.index_state_path)
     report = SyncReport()
     for document in discover_documents(config.knowledge_base_dir):
@@ -230,10 +251,13 @@ def sync_documents(
     _rate_limit: None = Depends(enforce_admin_rate_limit),
     config: Settings = Depends(get_settings),
     knowledge_base: OpenAIKnowledgeBase = Depends(get_knowledge_base),
+    hybrid_base: HybridKnowledgeBase = Depends(get_hybrid_base),
+    engine: Optional[RetrievalEngine] = None,
 ) -> SyncReport:
     if not config.knowledge_base_dir.is_dir():
         raise HTTPException(status_code=404, detail="Knowledge base directory not found")
-    return knowledge_base.sync(config.knowledge_base_dir)
+    base = hybrid_base if (engine or config.rag_engine) == "hybrid" else knowledge_base
+    return base.sync(config.knowledge_base_dir)
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -242,14 +266,31 @@ def chat(
     _rate_limit: None = Depends(enforce_chat_rate_limit),
     knowledge_base: OpenAIKnowledgeBase = Depends(get_knowledge_base),
     chat_store: ChatStore = Depends(get_chat_store),
+    hybrid_base: HybridKnowledgeBase = Depends(get_hybrid_base),
+    config: Settings = Depends(get_settings),
 ) -> ChatResponse:
     try:
-        response = knowledge_base.chat(
+        kwargs = dict(
             course=request.course,
             material_type=request.material_type,
             question=request.question,
             previous_response_id=request.previous_response_id,
         )
+        engine = request.engine or config.rag_engine
+        if engine == "hybrid":
+            history = []
+            if request.conversation_id:
+                conversations = {item.id: item for item in chat_store.list_conversations()}
+                conversation = conversations.get(request.conversation_id)
+                if not conversation or (conversation.course, conversation.material_type) != (
+                    request.course, request.material_type
+                ):
+                    raise ValueError("Conversation scope does not match the request")
+                history = [{"role": item.role, "content": item.content[:1000]}
+                           for item in chat_store.get_messages(request.conversation_id)[-4:]]
+            response = hybrid_base.chat(**kwargs, history=history)
+        else:
+            response = knowledge_base.chat(**kwargs)
         conversation_id, message_id = chat_store.save_exchange(
             conversation_id=request.conversation_id,
             course=request.course,
@@ -263,7 +304,30 @@ def chat(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"AI request failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail="AI 服务暂时不可用，请稍后再试。") from exc
+
+
+@app.get("/api/sources/{chunk_id}")
+def source_chunk(chunk_id: str, base: HybridKnowledgeBase = Depends(get_hybrid_base)) -> dict:
+    source = base.source(chunk_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="原文已变化或删除，请重新建立索引。")
+    return source
+
+
+@app.get("/api/sources/{chunk_id}/file")
+def source_file(
+    chunk_id: str, base: HybridKnowledgeBase = Depends(get_hybrid_base)
+) -> FileResponse:
+    source = base.source(chunk_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found or changed")
+    path = resolve_document_path(base.config.knowledge_base_dir, source["path"])
+    # Only the indexed PDF can be embedded inline. Other formats are downloads.
+    return FileResponse(path, filename=source["filename"],
+                        content_disposition_type="inline" if path.suffix.lower() == ".pdf"
+                        else "attachment",
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
 
 @app.get("/api/conversations", response_model=list[ConversationSummary])

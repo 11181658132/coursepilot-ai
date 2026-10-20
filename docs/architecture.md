@@ -19,6 +19,39 @@
 
 ## Ingestion flow
 
+### Self-managed hybrid engine
+
+`HybridKnowledgeBase` is selected by the local client's `engine=hybrid` request or
+the CLI's `--engine hybrid` option. The hosted engine remains the default baseline.
+
+- `parsing.py` extracts PDF pages and PPTX slides, including slide tables; every chunk
+  stays within one source location. DOCX and text use sections because they do not
+  provide stable rendered page numbers. Week metadata is inferred only from explicit
+  `week`/`wk` filename or path markers.
+- `chunk_store.py` stores the document hash, extraction/embedding configuration
+  signature, source metadata, original chunk text, and embeddings in SQLite. It
+  atomically replaces a document only after all new embeddings are available. Changed
+  and deleted files are excluded from search and source inspection by hash checks.
+- `retrieval.py` computes BM25 and exact cosine rankings **after** course/type
+  filtering. RRF merges both rankings. `hybrid_kb.py` optionally sends at most the
+  configured candidate count to an LLM relevance scorer, validating returned IDs.
+- Generation receives only the final passages and bounded same-course conversation
+  history. The server checks that inline source IDs match returned citations and
+  every quote occurs in the selected original chunk. Invalid citations fail closed.
+- `GET /api/sources/{chunk_id}` returns current chunk text; the `/file` suffix serves
+  the validated source file. Files are resolved inside the configured knowledge root.
+  Only PDFs render inline, with the page fragment supplied by the client.
+- Query costs include embeddings, reranking, and generation. Indexing reports include
+  consumed embedding tokens and cost. Operational logs contain no raw questions,
+  answers, filenames, or passages. The SQLite index is local and ignored by Git.
+
+This intentionally targets a small, single-user course corpus. It does not implement
+OCR, ANN indexing, or multi-tenant source authorization. The public Vercel demo
+continues to use the hosted route; exposing private source endpoints needs a separate
+authenticated backend deployment.
+
+### Hosted baseline
+
 1. The scanner discovers supported documents under each course folder and assigns
    `lecture`, `tutorial`, or `other` material types.
 2. Validation rejects traversal, unsafe names, unsupported extensions, mismatched
