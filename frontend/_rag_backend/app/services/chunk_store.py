@@ -10,6 +10,7 @@ class ChunkStore:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS documents (
                     path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, signature TEXT NOT NULL,

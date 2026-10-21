@@ -18,6 +18,32 @@ async def chunks(*values: bytes):
 
 
 class DocumentServiceTests(unittest.TestCase):
+    def test_concurrent_same_name_upload_never_overwrites(self):
+        async def race(root):
+            both_started = asyncio.Event()
+            started = 0
+
+            async def stream(content):
+                nonlocal started
+                started += 1
+                if started == 2:
+                    both_started.set()
+                await both_started.wait()
+                yield content
+
+            return await asyncio.gather(*[
+                save_upload(root, "A", "lecture", "same.md", stream(content), 100)
+                for content in [b"first upload", b"second upload"]
+            ], return_exceptions=True)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            results = asyncio.run(race(root))
+            self.assertEqual(sum(isinstance(item, FileExistsError) for item in results), 1)
+            self.assertIn((root / "A/lecture/same.md").read_bytes(),
+                          [b"first upload", b"second upload"])
+            self.assertEqual(len(list(root.rglob("*.upload"))), 0)
+
     def test_builds_safe_unicode_course_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

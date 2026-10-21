@@ -23,8 +23,8 @@
 ### Self-managed hybrid engine
 
 `HybridKnowledgeBase` is selected by the local client's `engine=hybrid` request or
-the CLI's `--engine hybrid` option. The public demo defaults to hybrid; the local
-client preserves its hosted baseline default and supports switching engines.
+the CLI's `--engine hybrid` option. Both clients default to hybrid and support
+switching engines; backend/CLI configuration can still select the hosted baseline.
 
 - `parsing.py` extracts PDF pages and PPTX slides, including slide tables; every chunk
   stays within one source location. DOCX and text use sections because they do not

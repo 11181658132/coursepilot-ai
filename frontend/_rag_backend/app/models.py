@@ -57,6 +57,26 @@ class SyncReport(BaseModel):
     chunk_count: int = 0
     embedding_tokens: int = 0
     estimated_cost_usd: float = 0.0
+    retryable_errors: int = 0
+    retry_after_seconds: float = 0
+    blocked_reason: Optional[str] = None
+
+
+class IndexJob(BaseModel):
+    id: str
+    engine: Literal["hybrid"] = "hybrid"
+    status: Literal["queued", "running", "succeeded", "failed"]
+    phase: str
+    processed: int
+    total: int
+    attempts: int
+    max_attempts: int
+    created_at: float
+    updated_at: float
+    available_at: float
+    error_code: Optional[str] = None
+    report: Optional[SyncReport] = None
+    estimated_cost_usd: float = 0
 
 
 class ChatRequest(BaseModel):

@@ -9,6 +9,7 @@ import json
 import math
 import re
 import time
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -65,7 +66,7 @@ class HybridKnowledgeBase:
     def manifest(self) -> dict:
         return self.store.manifest(self.signature)
 
-    def sync(self, root: Path, dry_run: bool = False) -> SyncReport:
+    def sync(self, root: Path, dry_run: bool = False, progress=None) -> SyncReport:
         if root.resolve() != self.config.knowledge_base_dir.resolve() or not root.is_dir():
             raise ValueError("Knowledge base directory not found or does not match the index")
         manifest = self.manifest()
@@ -74,7 +75,9 @@ class HybridKnowledgeBase:
         reserved_tokens = 0
         documents = discover_documents(root)
         paths = {document.relative_path for document in documents}
-        for document in documents:
+        notify = progress or (lambda done, total, phase: None)
+        notify(0, len(documents), "scanning")
+        for position, document in enumerate(documents):
             existing = manifest.get(document.relative_path)
             action = "skip" if existing and existing["sha256"] == document.sha256 else (
                 "replace" if existing else "upload"
@@ -84,11 +87,15 @@ class HybridKnowledgeBase:
                                             material_type=document.material_type, action=action))
             if action == "skip":
                 report.skipped += 1
+                notify(position + 1, len(documents), "scanning")
                 continue
             try:
                 if not dry_run:
+                    notify(position, len(documents), "parsing")
                     chunks = chunk_document(document, self.config.rag_chunk_chars,
                                             self.config.rag_chunk_overlap)
+                    if sha256_file(document.absolute_path) != document.sha256:
+                        raise ValueError("Document changed during parsing")
                     # UTF-8 byte count is a conservative upper bound on BPE tokens.
                     upper_tokens = sum(len(chunk.text.encode("utf-8")) for chunk in chunks)
                     if reserved_tokens + upper_tokens > self.config.rag_index_max_embedding_tokens:
@@ -96,7 +103,11 @@ class HybridKnowledgeBase:
                             "Index embedding token budget exceeded; use a smaller scope"
                         )
                     reserved_tokens += upper_tokens
+                    notify(position, len(documents), "embedding")
                     vectors = self._embed([chunk.text for chunk in chunks])
+                    if sha256_file(document.absolute_path) != document.sha256:
+                        raise ValueError("Document changed during embedding")
+                    notify(position, len(documents), "committing")
                     self.store.replace(document, self.signature,
                                        [chunk.as_dict() for chunk in chunks], vectors)
                     report.chunk_count += len(chunks)
@@ -108,8 +119,43 @@ class HybridKnowledgeBase:
                 report.failed += 1
                 # No provider response/body, course text, or keys in error output.
                 report.errors.append(f"{document.relative_path}: {type(exc).__name__}")
+                status = getattr(exc, "status_code", None)
+                code = getattr(exc, "code", None)
+                if code in {"insufficient_quota", "billing_hard_limit_reached"}:
+                    report.blocked_reason = "provider_quota_exhausted"
+                elif status in {401, 403}:
+                    report.blocked_reason = "provider_authentication"
+                elif not self.config.openai_api_key and self.client is None:
+                    report.blocked_reason = "configuration_missing"
+                retryable = (status == 429 and code not in {
+                    "insufficient_quota", "billing_hard_limit_reached"
+                }) or (isinstance(status, int) and status >= 500) or type(exc).__name__ in {
+                    "APIConnectionError", "APITimeoutError"
+                }
+                if retryable:
+                    report.retryable_errors += 1
+                    response = getattr(exc, "response", None)
+                    retry_after = (response.headers.get("retry-after")
+                                   if response is not None else None)
+                    if retry_after:
+                        try:
+                            delay = float(retry_after)
+                        except ValueError:
+                            try:
+                                delay = parsedate_to_datetime(retry_after).timestamp() - time.time()
+                            except (ValueError, TypeError, OverflowError):
+                                delay = 0
+                        if math.isfinite(delay):
+                            report.retry_after_seconds = max(report.retry_after_seconds, delay)
+                # Do not hammer a rate-limited provider for the remaining documents.
+                if retryable or report.blocked_reason or status in {401, 403, 429}:
+                    notify(position + 1, len(documents), "provider_blocked")
+                    break
+            notify(position + 1, len(documents), "scanning")
+        notify(report.uploaded + report.replaced + report.skipped + report.failed,
+               len(documents), "finalizing")
         for path in manifest.keys() - paths:
-            if not dry_run:
+            if not dry_run and not resolve_document_path(root, path).exists() and root.is_dir():
                 self.store.delete_document(path)
             report.removed += 1
         report.embedding_tokens = self.embedding_tokens - tokens_before

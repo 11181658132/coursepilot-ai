@@ -220,6 +220,52 @@ python -m app.cli sync
 Subsequent runs skip unchanged files. New and changed documents are sent to an
 OpenAI vector store and can incur API storage/processing charges.
 
+## Reliable local indexing
+
+The local UI now defaults to hybrid retrieval. **Start indexing** creates a durable
+job and returns HTTP 202, instead of holding a request open during parsing/embedding.
+Start a separate worker alongside the API:
+
+```bash
+# From the repository root; uses the same local .env as the API.
+PYTHONPATH=backend .venv/bin/python -m app.worker
+# Process at most one eligible task, then exit:
+PYTHONPATH=backend .venv/bin/python -m app.worker --once
+```
+
+Uploading alone does not start a worker or spend API credits. The UI shows persisted
+progress, attempt counts, recorded cost, and sanitized failures; refreshing reloads
+the job. If it stays queued, check that the worker uses the same configuration.
+
+- Jobs use `index_jobs.sqlite3` beside `RAG_DB_PATH`: a versioned schema, WAL,
+  transactional claims, and one active job per configuration. Repeated submissions
+  coalesce while active. An optional `Idempotency-Key` replays the original job even
+  after completion. Successful unchanged documents are skipped on retry.
+- Worker, legacy sync API, CLI sync, and deletion share a nonblocking OS writer
+  lock. Process death releases it; the next worker recovers interrupted work.
+  Attempts are capped at three per job. Transient provider failures schedule retries
+  no earlier than **Retry-After**; quota/authentication failures stop for user action,
+  and parse failures require manual retry. No API request sleeps while waiting.
+- Each replacement commits only after parsing, embedding, and a fresh source hash
+  check succeed. Failed replacements preserve the previous stored index. Changed
+  sources are excluded from retrieval until reindexed, not silently served as current.
+  This is **per-document**, not whole-library atomicity.
+- Concurrent same-name uploads use atomic create-if-absent instead of overwriting.
+  Uploads arriving during a scan may need another job after that scan completes.
+
+This remains a **single-host, single-user** queue on Linux/macOS with a shared local
+disk. It is not a distributed queue, tenant authorization, PostgreSQL migration, or
+exactly-once external billing. A crash after a paid provider call but before local
+commit can repeat that call and lose its local cost record. Displayed costs are
+recorded estimates, not a billing ledger. Keep provider spend controls. Back up source
+files and databases together; never delete live WAL files. Do not expose the local
+administration API to the internet without authentication.
+
+Docker Compose includes a restartable `index-worker` sharing the index volume and
+an API healthcheck/restart policy. The API source mount is writable for uploads;
+the worker's source mount is read-only. No new cloud service or subscription is needed.
+The Vercel public demo remains fictional/read-only and does not expose these admin APIs.
+
 ## Public portfolio demo
 
 The frontend includes an explicit read-only mode for public deployment. It uses
@@ -264,7 +310,7 @@ must be rotated before its configured expiry date.
 ## Tests
 
 ```bash
-python -m unittest discover -s backend/tests -v
+PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -v
 cd frontend && npm test && npm run typecheck && npm run build
 ```
 
@@ -279,6 +325,10 @@ GitHub Actions repeats these checks on every push and pull request.
 - `DELETE /api/documents` — explicit local and remote deletion
 - `POST /api/sync/preview` — pending index changes without upload
 - `POST /api/sync` — incremental synchronization
+- `POST /api/index-jobs` — durable hybrid-index job submission (202)
+- `GET /api/index-jobs` — latest 20 jobs in the current index configuration
+- `GET /api/index-jobs/{id}` — persisted progress and results
+- `POST /api/index-jobs/{id}/retry` — retry a failed job below its attempt cap
 - `POST /api/chat` — grounded question answering
 - `GET /api/conversations` — conversation history
 - `GET /api/conversations/{id}/messages` — conversation messages

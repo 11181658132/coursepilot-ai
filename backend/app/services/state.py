@@ -27,6 +27,8 @@ def save_state(path: Path, state: Dict[str, object]) -> None:
         with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
             json.dump(state, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary_name, path)
     except Exception:
         try:

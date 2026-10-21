@@ -5,6 +5,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.evaluation import load_cases, resume_evaluation, run_evaluation, write_report
 from app.services.hybrid_kb import HybridKnowledgeBase
+from app.services.index_jobs import index_writer
 from app.services.library import discover_documents, summarize_courses
 from app.services.openai_kb import OpenAIKnowledgeBase
 from app.services.state import load_state
@@ -105,7 +106,8 @@ def main() -> None:
             )
         )
         return
-    report = knowledge_base.sync(settings.knowledge_base_dir)
+    with index_writer(settings):
+        report = knowledge_base.sync(settings.knowledge_base_dir)
     print(report.model_dump_json(indent=2))
 
 

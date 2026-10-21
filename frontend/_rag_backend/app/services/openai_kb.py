@@ -168,7 +168,7 @@ class OpenAIKnowledgeBase:
                     report.uploaded += 1
             except Exception as exc:
                 report.failed += 1
-                report.errors.append(f"{document.relative_path}: {exc}")
+                report.errors.append(f"{document.relative_path}: {type(exc).__name__}")
         return report
 
     def _store_ids(self, course: str, material_type: str) -> List[str]:

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
 type Course = { course: string; lecture_count: number; tutorial_count: number; other_count: number; indexed_count: number };
@@ -27,6 +27,11 @@ type SyncReport = {
   uploaded: number; replaced: number; skipped: number; failed: number;
   errors: string[];
   removed?: number; chunk_count?: number; estimated_cost_usd?: number;
+};
+type IndexJob = {
+  id: string; status: "queued" | "running" | "succeeded" | "failed"; phase: string;
+  processed: number; total: number; attempts: number; max_attempts: number;
+  error_code?: string; report?: SyncReport; estimated_cost_usd: number; available_at: number;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -71,7 +76,9 @@ export default function Home() {
   const [syncPreview, setSyncPreview] = useState<SyncReport | null>(null);
   const [demoThreads, setDemoThreads] = useState<Record<string, Message[]>>({});
   const [remainingToday, setRemainingToday] = useState(5);
-  const [engine, setEngine] = useState<"file_search" | "hybrid">(DEMO_MODE ? "hybrid" : "file_search");
+  const [engine, setEngine] = useState<"file_search" | "hybrid">("hybrid");
+  const [indexJob, setIndexJob] = useState<IndexJob | null>(null);
+  const lastJobState = useRef("");
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
 
@@ -136,6 +143,34 @@ export default function Home() {
   useEffect(() => {
     if (view !== "documents") return;
     refreshLibrary().catch((reason: Error) => setError(reason.message));
+  }, [view, engine]);
+
+  useEffect(() => {
+    if (DEMO_MODE || view !== "documents" || engine !== "hybrid") return;
+    const controller = new AbortController();
+    let fetching = false;
+    async function poll() {
+      if (fetching) return;
+      fetching = true;
+      try {
+        const response = await fetch(`${API_URL}/api/index-jobs`, { signal: controller.signal });
+        if (!response.ok) throw new Error("无法读取索引任务；请检查后端连接。");
+        const jobs = await response.json() as IndexJob[];
+        if (controller.signal.aborted) return;
+        const latest = jobs[0] ?? null;
+        setIndexJob(latest);
+        const key = latest ? `${latest.id}:${latest.status}` : "";
+        if (latest && key !== lastJobState.current && ["succeeded", "failed"].includes(latest.status)) {
+          await refreshLibrary();
+        }
+        lastJobState.current = key;
+      } catch (reason) {
+        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "任务查询失败");
+      } finally { fetching = false; }
+    }
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2000);
+    return () => { controller.abort(); window.clearInterval(timer); };
   }, [view, engine]);
 
   const selected = useMemo(
@@ -361,10 +396,19 @@ export default function Home() {
     setError("");
     setNotice("");
     try {
+      if (engine === "hybrid") {
+        const response = await fetch(`${API_URL}/api/index-jobs`, { method: "POST" });
+        const job = await response.json() as IndexJob & { detail?: string };
+        if (!response.ok) throw new Error(job.detail ?? "创建索引任务失败");
+        setIndexJob(job);
+        setNotice("索引任务已保存，由独立 Worker 在后台处理；刷新页面不会丢失进度。");
+        setSyncPreview(null);
+        return;
+      }
       const response = await fetch(`${API_URL}/api/sync?engine=${engine}`, { method: "POST" });
       const data = await response.json() as SyncReport & { detail?: string };
       if (!response.ok) throw new Error(data.detail ?? "索引失败");
-      setNotice(`索引完成：新增 ${data.uploaded}，替换 ${data.replaced}，跳过 ${data.skipped}，失败 ${data.failed}。${engine === "hybrid" ? ` 本次创建 ${data.chunk_count ?? 0} 个片段，估算费用 $${(data.estimated_cost_usd ?? 0).toFixed(6)}。` : ""}`);
+      setNotice(`索引完成：新增 ${data.uploaded}，替换 ${data.replaced}，跳过 ${data.skipped}，失败 ${data.failed}。`);
       setSyncPreview(null);
       await refreshLibrary();
     } catch (reason) {
@@ -372,6 +416,18 @@ export default function Home() {
     } finally {
       setDocumentLoading(false);
     }
+  }
+
+  async function retryIndex() {
+    if (!indexJob || DEMO_MODE) return;
+    setDocumentLoading(true); setError("");
+    try {
+      const response = await fetch(`${API_URL}/api/index-jobs/${indexJob.id}/retry`, { method: "POST" });
+      const job = await response.json();
+      if (!response.ok) throw new Error(job.detail ?? "重试失败");
+      setIndexJob(job); setNotice("已重新排队；成功索引且未变化的文件会跳过。");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "重试失败"); }
+    finally { setDocumentLoading(false); }
   }
 
   async function deleteDocument(item: DocumentRecord) {
@@ -560,6 +616,17 @@ export default function Home() {
             {documentLoading ? "正在索引…" : "开始索引"}
           </button>
         </div>}
+        {!DEMO_MODE && engine === "hybrid" && indexJob && <section className="syncCard" aria-label="后台索引任务" aria-live="polite">
+          <div><strong>后台索引 · {({ queued: "等待处理", running: "处理中", succeeded: "已完成", failed: "失败" })[indexJob.status]}</strong>
+            <span>阶段：{({ waiting: "等待 Worker", scanning: "扫描", parsing: "解析", embedding: "向量化", committing: "保存索引", finalizing: "清理", interrupted: "中断恢复", retry_wait: "等待限额恢复", succeeded: "完成", failed: "失败" } as Record<string, string>)[indexJob.phase] ?? indexJob.phase} · 已处理 {indexJob.processed}/{indexJob.total} · 尝试 {indexJob.attempts}/{indexJob.max_attempts}</span>
+            <small>任务 {indexJob.id} · 已记录估算费用 ${indexJob.estimated_cost_usd.toFixed(6)}</small>
+            {indexJob.status === "queued" && <p>{indexJob.phase === "retry_wait" ? `下次尝试不早于 ${new Date(indexJob.available_at * 1000).toLocaleString()}` : "请保持独立索引 Worker 运行；任务已持久化，无需保持此页面打开。"}</p>}
+            {indexJob.error_code && <p>错误：{({ provider_quota_exhausted: "API 余额或配额不足，请处理账单后手动重试。", provider_authentication: "API 密钥无效或权限不足，请检查配置。", configuration_missing: "未配置 API Key，请在本地 .env 中配置后重试。", indexing_failed: "部分文件未能索引，请查看下方错误。", worker_interrupted: "上次 Worker 意外中断。" } as Record<string, string>)[indexJob.error_code] ?? indexJob.error_code}</p>}
+            {indexJob.report && <p>新增 {indexJob.report.uploaded} · 替换 {indexJob.report.replaced} · 跳过 {indexJob.report.skipped} · 失败 {indexJob.report.failed}</p>}
+            {indexJob.report?.errors.map((message, position) => <p key={position}>{message}</p>)}
+          </div>
+          {indexJob.status === "failed" && indexJob.attempts < indexJob.max_attempts && <button disabled={documentLoading} onClick={retryIndex}>重试失败任务</button>}
+        </section>}
         {notice && <div className="notice">{notice}</div>}
         {error && <div className="error">{error}</div>}
 

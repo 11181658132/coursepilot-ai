@@ -90,10 +90,14 @@ async def save_upload(
                         f"File exceeds the {max_bytes // (1024 * 1024)} MB limit"
                     )
                 handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
         if total == 0:
             raise DocumentValidationError("Uploaded file is empty")
         _validate_file_signature(Path(temporary_name), target.suffix.lower())
-        os.replace(temporary_name, target)
+        # Atomic create-if-absent: two concurrent uploads must never overwrite.
+        os.link(temporary_name, target)
+        os.unlink(temporary_name)
         return target, total
     except Exception:
         try:

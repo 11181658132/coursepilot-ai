@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import Settings, get_settings
 from app.models import (
@@ -17,6 +17,7 @@ from app.models import (
     DocumentRecord,
     FeedbackRequest,
     FeedbackResponse,
+    IndexJob,
     RetrievalEngine,
     SyncChange,
     SyncReport,
@@ -30,6 +31,13 @@ from app.services.documents import (
     save_upload,
 )
 from app.services.hybrid_kb import HybridKnowledgeBase
+from app.services.index_jobs import (
+    IndexBusyError,
+    JobStore,
+    index_writer,
+    queue_path,
+    queue_scope,
+)
 from app.services.library import discover_documents, summarize_courses
 from app.services.openai_kb import OpenAIKnowledgeBase
 from app.services.rate_limit import SlidingWindowRateLimiter
@@ -83,6 +91,16 @@ def get_chat_store(config: Settings = Depends(get_settings)) -> ChatStore:
 
 def get_hybrid_base(config: Settings = Depends(get_settings)) -> HybridKnowledgeBase:
     return HybridKnowledgeBase(config)
+
+
+def get_job_store(config: Settings = Depends(get_settings)) -> JobStore:
+    return JobStore(queue_path(config))
+
+
+@app.exception_handler(IndexBusyError)
+def index_busy_handler(_request: Request, _exc: IndexBusyError):
+    return JSONResponse(status_code=409, content={"detail": "索引正在更新，请稍后重试。"},
+                        headers={"Retry-After": "2"})
 
 
 def index_state(config: Settings, engine: RetrievalEngine) -> dict:
@@ -198,12 +216,13 @@ def delete_document(
         target = resolve_document_path(config.knowledge_base_dir, request.path)
     except DocumentValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    index_deleted = knowledge_base.delete_document(request.path)
-    index_deleted = hybrid_base.delete_document(request.path) or index_deleted
-    local_deleted = False
-    if target.is_file():
-        target.unlink()
-        local_deleted = True
+    with index_writer(config):
+        index_deleted = knowledge_base.delete_document(request.path)
+        index_deleted = hybrid_base.delete_document(request.path) or index_deleted
+        local_deleted = False
+        if target.is_file():
+            target.unlink()
+            local_deleted = True
     if not local_deleted and not index_deleted:
         raise HTTPException(status_code=404, detail="Document not found")
     return DeleteDocumentResponse(
@@ -257,7 +276,49 @@ def sync_documents(
     if not config.knowledge_base_dir.is_dir():
         raise HTTPException(status_code=404, detail="Knowledge base directory not found")
     base = hybrid_base if (engine or config.rag_engine) == "hybrid" else knowledge_base
-    return base.sync(config.knowledge_base_dir)
+    with index_writer(config):
+        return base.sync(config.knowledge_base_dir)
+
+
+@app.post("/api/index-jobs", response_model=IndexJob, status_code=202,
+          dependencies=[Depends(enforce_admin_rate_limit)])
+def create_index_job(
+    config: Settings = Depends(get_settings),
+    store: JobStore = Depends(get_job_store),
+    idempotency_key: Optional[str] = Header(default=None, min_length=1, max_length=128),
+    engine: str = Query(default="hybrid", pattern="^hybrid$"),
+) -> dict:
+    if not config.knowledge_base_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Knowledge base directory not found")
+    return store.enqueue(queue_scope(config), idempotency_key)
+
+
+@app.get("/api/index-jobs", response_model=list[IndexJob])
+def index_jobs(config: Settings = Depends(get_settings),
+               store: JobStore = Depends(get_job_store)) -> list:
+    return store.recent(queue_scope(config))
+
+
+@app.get("/api/index-jobs/{job_id}", response_model=IndexJob)
+def index_job(job_id: str, config: Settings = Depends(get_settings),
+              store: JobStore = Depends(get_job_store)) -> dict:
+    job = store.get(job_id, queue_scope(config))
+    if not job:
+        raise HTTPException(status_code=404, detail="Index job not found")
+    return job
+
+
+@app.post("/api/index-jobs/{job_id}/retry", response_model=IndexJob, status_code=202,
+          dependencies=[Depends(enforce_admin_rate_limit)])
+def retry_index_job(job_id: str, config: Settings = Depends(get_settings),
+                    store: JobStore = Depends(get_job_store)) -> dict:
+    try:
+        job = store.retry(job_id, queue_scope(config))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not job:
+        raise HTTPException(status_code=404, detail="Index job not found")
+    return job
 
 
 @app.post("/api/chat", response_model=ChatResponse)
