@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import StudyAgent from "./study-agent";
 
 type Course = { course: string; lecture_count: number; tutorial_count: number; other_count: number; indexed_count: number };
 type Source = { chunk_id?: string; path?: string; page?: number; locator_type?: "page" | "slide" | "section"; week?: number; source_id?: string };
@@ -57,7 +58,8 @@ const DEMO_SUGGESTIONS = [
 ];
 
 export default function Home() {
-  const [view, setView] = useState<"chat" | "documents">("chat");
+  const [view, setView] = useState<"chat" | "documents" | "agent">("chat");
+  const [agentGoal, setAgentGoal] = useState("");
   const [courses, setCourses] = useState<Course[]>(DEMO_MODE ? DEMO_COURSES : []);
   const [documents, setDocuments] = useState<DocumentRecord[]>(DEMO_MODE ? DEMO_DOCUMENTS : []);
   const [conversations, setConversations] = useState<Conversation[]>(DEMO_MODE ? DEMO_CONVERSATIONS : []);
@@ -491,8 +493,9 @@ export default function Home() {
         <nav className="viewTabs" aria-label="页面切换">
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>课程问答</button>
           <button className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>资料管理</button>
+          <button className={view === "agent" ? "active" : ""} onClick={() => setView("agent")}>复习计划 Agent</button>
         </nav>
-        <label className="enginePicker">检索方式
+        {view !== "agent" && <label className="enginePicker">检索方式
           <select value={engine} disabled={loading || documentLoading} onChange={(event) => {
             setEngine(event.target.value as "file_search" | "hybrid");
             newConversation(); setSyncPreview(null); setNotice(""); setSourcePreview(null);
@@ -501,11 +504,11 @@ export default function Home() {
             <option value="hybrid">自建 RAG · 混合检索与重排序</option>
           </select>
           {engine === "hybrid" && <span>{DEMO_MODE ? "与本地共用 Python 核心：BM25 + 向量检索、重排序，引用可展开原文。" : "首次使用请在资料管理中建立混合索引，问答引用可展开原文。"}</span>}
-        </label>
+        </label>}
         {DEMO_MODE && <div className="demoBanner"><strong>真实 AI 演示</strong><span>使用虚构资料实时检索并调用 OpenAI；不包含任何真实课程文件。每位访客每天可提问 5 次。</span></div>}
       </header>
 
-      {view === "chat" ? <section className="workspace">
+      {view === "agent" ? <StudyAgent apiUrl={API_URL} demoMode={DEMO_MODE} courses={courses} onSource={inspectSource} initialCourse={course} initialGoal={agentGoal} /> : view === "chat" ? <section className="workspace">
         <aside className="sidebar">
           <button className="newChat" onClick={newConversation}>＋ 新对话</button>
           <div className="sectionLabel historyLabel">聊天记录</div>
@@ -546,7 +549,7 @@ export default function Home() {
         </aside>
 
         <div className="content">
-          {messages.map((message) => message.role === "user" ? (
+          {messages.map((message, messageIndex) => message.role === "user" ? (
             <article className="userMessage" key={message.id}><span>你</span><p>{message.content}</p></article>
           ) : (
             <article className="answerCard" key={message.id}>
@@ -562,6 +565,11 @@ export default function Home() {
                   </li>)}
                 </ul>}
               </div>
+              <button type="button" disabled={loading || message.citations.length === 0} onClick={() => {
+                const prompt = messages.slice(0, messageIndex).reverse().find(item => item.role === "user")?.content ?? "";
+                setAgentGoal(("围绕以下学习问题，结合课程资料安排复习和自测：" + prompt).slice(0, DEMO_MODE ? 400 : 1000));
+                setView("agent");
+              }}>基于这个问题制定复习计划</button>
               {message.evidence.length > 0 && <details><summary>查看检索证据</summary>
                 {message.evidence.map((item, index) => <div className="evidence" key={`${item.filename}-${index}`}>
                   <strong>{item.filename}{sourceLocation(item)}</strong>{item.rerank_score != null ? <span>重排序评分 {item.rerank_score}/3</span> : item.score != null && <span>检索得分 {item.score.toFixed(3)}</span>}<p>{item.text}</p>
@@ -642,6 +650,7 @@ export default function Home() {
           {documents.length === 0 && <p className="emptyDocuments">知识库里还没有资料。</p>}
         </div>
       </section>}
+      {view === "agent" && error && <div className="error" role="alert">{error}</div>}
       {sourcePreview && <div className="sourceOverlay" onClick={() => setSourcePreview(null)}>
         <section className="sourceDialog" role="dialog" aria-modal="true" aria-label="引用原文" tabIndex={-1}
           onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {

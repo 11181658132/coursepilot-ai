@@ -226,6 +226,30 @@ run it increased latency/cost without improving the proxy pass rate. With four
 results over five documents, retrieval hit is inherently easy; these results do not
 establish private-course quality, large-corpus retrieval, or production latency.
 
+### Targeted citation-format diagnosis · 2026-10-21
+
+The 16 historically uncited hybrid variant/case pairs were reproduced using only
+the five fictional DEMO101 files, the same model and unchanged generation prompt.
+The new responses included 9 validated answers and 7 citation-marker mismatches:
+the latter contained valid structured source IDs and verbatim quotes, but omitted
+the inline `[S1]` markers. Original historical drafts were not retained, so this
+does not establish the cause of every historical failure.
+
+The validator now appends markers for the model-selected sources **only after all
+source IDs and quotes pass validation**, and only when no citation-like markers
+already exist. Wrong IDs, invented quotes, conflicting/malformed markers, provider
+refusals and incomplete output still fail closed. Safe diagnostic reason codes
+distinguish these failures from insufficient evidence; rejected drafts are not
+returned or logged in application telemetry. Quote presence is not a semantic
+faithfulness guarantee, and appended markers do not provide claim-level attribution.
+
+Offline replay of these identical 16 new drafts recovered the 7 formatting failures
+and preserved the other 9 results, with zero extra API calls. This is a selected
+development regression check, **not a revised benchmark pass rate**. The historical
+90-response comparison and untouched holdout remain unchanged. Targeted live cost:
+**$0.00336610 estimated**, 40 API calls, zero uncertain charges, below the separately
+approved $0.05 cap. Raw fictional diagnostic traces stay in ignored local reports.
+
 ### Hosted File Search indexing
 
 Previewing is local and free:
@@ -375,6 +399,87 @@ GitHub Actions repeats these checks on every push and pull request.
   project and fictional files. Its in-memory application counters are intentionally
   backed by a provider hard spend limit; durable multi-instance rate limiting is the
   next production step.
+
+## Study-plan Agent (local-first)
+
+Open the **复习计划 Agent** tab in the local app. Select an already hybrid-indexed
+course, enter a learning goal, 1–14 days and 15–180 minutes/day, then generate a
+draft. Generation uses the configured `gpt-6-luna` and can incur API charges.
+Review the daily tasks, source quotes and self-test answers before clicking
+**确认并启用这份计划**. Only confirmed plans allow completion checkboxes. Plans,
+progress and safe tool traces survive refresh/restart in an ignored local SQLite
+database beside the conversation database. Confirmation/progress do not call a model.
+
+This is a bounded Responses function-calling loop, not a static prompt chain:
+the model chooses allowlisted calls/arguments, receives validated tool outputs,
+and can search up to twice before proposing a plan. Available model tools are
+`list_materials`, `search_knowledge`, and `propose_study_plan` (including a short
+quiz and answer for each day). Course scope is server-bound; proposal source IDs
+and exact quotes must match retrieved evidence. The model has **no confirmation,
+task-update, shell, external URL or document-write tool**. It cannot execute
+instructions found in course material outside this allowlist. Semantic grounding
+still requires human review; source matching alone cannot guarantee correctness.
+
+State: `running → draft → active`, or `running → failed`. Drafts are persisted
+previews, not enabled tasks. Request UUID + payload fingerprints prevent duplicate
+generation on retries, confirmation is idempotent, and version checks prevent
+overwriting concurrent progress updates. Failed runs never enable partial tasks.
+Interrupted runs remain visible as running; they do not silently restart paid work.
+
+Limits: 6 model turns, 2 searches, 120-second loop deadline checked between calls,
+20-second SDK request timeout, no automatic retries, bounded payload/output sizes.
+Every model/embedding request first reserves estimated USD cost atomically in
+SQLite. Defaults are $0.05/run and $0.50/day globally (UTC), configurable downward
+via `AGENT_RUN_BUDGET_USD` and `AGENT_DAILY_BUDGET_USD`. Unknown/failed calls keep
+their reservations. Supported metering uses the existing model/embedding list-rate
+estimates; this is **not a provider billing guarantee**. Keep a provider-side spend
+limit as well. The daily cap is local-database-wide, not per visitor.
+
+API: `POST/GET /api/study-plans`, `GET /api/study-plans/{id}`,
+`POST /api/study-plans/{id}/confirm` with explicit `confirmed: true` + version,
+and `PATCH /api/study-plans/{id}/tasks/{task_id}` with `done` + version.
+See [Agent regression tests](backend/tests/test_study_agent.py) for confirmation,
+idempotency, concurrency, scope/allowlist enforcement, bad citations, loop limits,
+budget reservations and API contract coverage. Tests use fake model responses;
+they do not establish live-model success or semantic accuracy.
+
+One separately approved live smoke test on 2026-10-21 used only the five fictional
+DEMO101 files and an isolated database. It generated a 3-day cited draft, confirmed
+it, completed one task and verified persistence after reopening SQLite. All five
+workflow checks passed; confirmation/progress made no additional paid calls. Total:
+4 API calls (3 model turns + 1 retrieval embedding), estimated **$0.00069114**, zero
+uncertain charges, below the approved $0.05 cap. This is one development acceptance
+test, **not an Agent success-rate or semantic accuracy benchmark**. To inspect the
+runner without paying, run `python -m app.study_smoke` from `backend`; `--live`
+requires explicit approval and reuses its fixed request ID, rather than silently
+regenerating. Reports and test database remain ignored under `evals/reports/`.
+
+The local FastAPI Agent remains **single-user**; do not expose it publicly.
+The separate public-demo Agent gateway now supports signed anonymous visitor
+sessions, scoped PostgreSQL persistence, atomic shared cost reservations and
+confirmation/progress actions over the same canonical Python Agent. It accepts only
+fictional DEMO101 data. It fails closed unless its dedicated database and explicit
+feature flag are configured; this implementation is **not a claim of a completed
+live deployment**. See [public Agent setup and acceptance](docs/PUBLIC_AGENT_DEPLOYMENT.md).
+No private course files are bundled for deployment.
+
+### Scripted Agent contract evaluation · 2026-10-21
+
+`cd backend && ../.venv/bin/python -m app.agent_evaluation` runs 30 development
+contracts with **scripted model outputs and fixture retrieval**, exercising the
+actual Agent and SQLite state logic without API calls. The suite currently passes
+30/30: 5/5 scripted completion flows, 4/4 state checks and 21/21 safety/failure
+scenarios. Returned task citation coverage and independent verbatim-source matching
+are each 32/32. These are **backend contract results, not model accuracy or semantic
+faithfulness**. Live model task success, claim support and inference latency remain
+unmeasured by this suite; human review coverage is zero. New actual API spend: $0.
+
+CI is configured to run this free suite and fail on regressions. Local reports keep
+per-case checks, safe tool traces, dataset/source/code fingerprints and archived
+snapshots; raw local reports are ignored by Git. Scorer tests deliberately corrupt
+quotes/IDs, expected results and runner behavior to verify failures are detected.
+See the [Agent evaluation protocol](evals/AGENT_EVALUATION.md) for commands, metric
+definitions, limitations and the future live/human review procedure.
 
 ## Roadmap
 

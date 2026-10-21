@@ -155,3 +155,35 @@ fallback. Some extra-citation penalties may also reflect incomplete draft source
 sets. Do not equate these tags with independently verified model errors.
 
 Methodology reference: [OpenAI evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
+
+## Targeted no-citation diagnosis
+
+`app.refusal_diagnosis` selects only the 16 historical development variant/case
+pairs with retrieved evidence and no citations (8 per hybrid variant). It verifies
+dataset/corpus hashes and uses only fictional DEMO101 data. Without `--live` it
+lists the count without API calls. Live runs require explicit separate approval,
+retain a shared persisted USD 0.05 budget across phases, and never overwrite the
+original benchmark. Do not run this as a replacement for a held-out evaluation.
+
+```bash
+cd backend
+# Paid opt-in: only within an approved, unused diagnostic budget.
+../.venv/bin/python -m app.refusal_diagnosis --live --phase baseline --budget-usd 0.05
+# Free: validate the identical cached drafts with the current validator.
+../.venv/bin/python -m app.refusal_diagnosis --replay
+```
+
+The 2026-10-21 reproduction generated 9 valid answers and 7 drafts with verified
+quotes but absent inline source markers. Strict validation now repairs only this
+presentation omission; it never guesses sources, repairs wrong IDs or invents
+quotes. Cached replay validated all 16 drafts (7 marker repairs), with no new
+generation calls. This selected sample cannot establish a new benchmark accuracy
+or explain the historical drafts that were not retained. The holdout and original
+90 benchmark responses are unchanged; human faithfulness review remains necessary.
+
+Targeted cost ledger: USD 0.00336610 estimated, 40 calls, zero uncertain charges.
+`evals/reports/refusal-diagnosis/` contains ignored local traces and replay reports,
+including source-report and validator hashes. Never commit raw responses, evidence,
+file names, telemetry, credentials or local reports. Only aggregate findings belong
+in published documentation. Production diagnostics contain enum reason/stage codes,
+counts and a marker-repair flag, not rejected prose or provider refusal bodies.

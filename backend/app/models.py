@@ -113,6 +113,17 @@ class Evidence(SourceLocation):
     rerank_score: Optional[float] = None
 
 
+class AnswerDiagnostics(BaseModel):
+    reason: Literal["answered", "no_relevant_evidence", "generation_no_citations",
+                    "invalid_model_output", "unknown_source_id", "quote_not_found",
+                    "quote_too_short", "inline_citation_mismatch", "provider_refusal",
+                    "response_incomplete"]
+    stage: Literal["retrieval", "rerank", "generation", "validation"]
+    evidence_count: int = 0
+    citation_count: int = 0
+    citation_markers_repaired: bool = False
+
+
 class ChatResponse(BaseModel):
     answer: str
     response_id: Optional[str] = None
@@ -123,6 +134,7 @@ class ChatResponse(BaseModel):
     estimated_cost_usd: float = 0.0
     conversation_id: Optional[str] = None
     message_id: Optional[str] = None
+    diagnostics: Optional[AnswerDiagnostics] = None
 
 
 class ConversationSummary(BaseModel):

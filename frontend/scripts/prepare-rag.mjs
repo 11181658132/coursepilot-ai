@@ -11,6 +11,7 @@ const modules = [
   "services/chunk_store.py", "services/documents.py", "services/hybrid_kb.py",
   "services/library.py", "services/openai_kb.py", "services/parsing.py",
   "services/retrieval.py", "services/state.py", "services/telemetry.py",
+  "services/study_agent.py", "services/study_store.py", "services/public_study_store.py",
 ];
 for (const name of modules) {
   const content = await readFile(path.join(root, "backend/app", name));

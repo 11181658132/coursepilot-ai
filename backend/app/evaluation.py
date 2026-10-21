@@ -63,6 +63,7 @@ class EvalResult:
     citations: List[dict] = field(default_factory=list)
     usage: dict = field(default_factory=dict)
     reference_answer: str = ""
+    diagnostics: Optional[dict] = None
 
 
 REFUSAL_MARKERS = (
@@ -212,6 +213,7 @@ def score_case(case: EvalCase, response: ChatResponse) -> EvalResult:
         evidence=[item.model_dump() for item in response.evidence],
         citations=[item.model_dump() for item in response.citations],
         reference_answer=case.reference_answer,
+        diagnostics=response.diagnostics.model_dump() if response.diagnostics else None,
     )
 
 

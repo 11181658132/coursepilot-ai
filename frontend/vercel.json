@@ -1,6 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
+    "api/agent.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{node_modules/**,.next/**,**/*.test.ts,scripts/**}"
+    },
     "api/rag.py": {
       "maxDuration": 60,
       "excludeFiles": "{node_modules/**,.next/**,**/*.test.ts,scripts/**}"

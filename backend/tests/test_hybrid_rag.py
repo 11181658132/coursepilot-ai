@@ -166,7 +166,9 @@ class HybridRagTests(unittest.TestCase):
             setattr(self.client, flag, True)
             response = self.base.chat("A", "lecture", "Explain database transactions")
             self.assertEqual(response.citations, [])
-            self.assertIn("没有足够证据", response.answer)
+            self.assertIn("引用校验", response.answer)
+            self.assertEqual(response.diagnostics.reason,
+                             "quote_not_found" if flag == "invalid_quote" else "unknown_source_id")
             setattr(self.client, flag, False)
 
     def test_low_relevance_abstains_without_generation(self):

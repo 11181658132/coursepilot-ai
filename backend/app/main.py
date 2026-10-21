@@ -42,6 +42,8 @@ from app.services.library import discover_documents, summarize_courses
 from app.services.openai_kb import OpenAIKnowledgeBase
 from app.services.rate_limit import SlidingWindowRateLimiter
 from app.services.state import load_state
+from app.services.study_agent import Confirmation, PlanRequest, StudyAgent, TaskUpdate
+from app.services.study_store import StudyConflict, StudyStore
 
 app = FastAPI(
     title="CoursePilot AI API",
@@ -95,6 +97,20 @@ def get_hybrid_base(config: Settings = Depends(get_settings)) -> HybridKnowledge
 
 def get_job_store(config: Settings = Depends(get_settings)) -> JobStore:
     return JobStore(queue_path(config))
+
+
+def get_study_store(config: Settings = Depends(get_settings)) -> StudyStore:
+    return StudyStore(config.conversation_db_path.with_name("study_agent.sqlite3"))
+
+
+def get_study_agent(config: Settings = Depends(get_settings),
+                    store: StudyStore = Depends(get_study_store)) -> StudyAgent:
+    return StudyAgent(config, store)
+
+
+@app.exception_handler(StudyConflict)
+def study_conflict_handler(_request: Request, exc: StudyConflict):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 @app.exception_handler(IndexBusyError)
@@ -394,6 +410,45 @@ def source_file(
 @app.get("/api/conversations", response_model=list[ConversationSummary])
 def conversations(chat_store: ChatStore = Depends(get_chat_store)) -> list[ConversationSummary]:
     return chat_store.list_conversations()
+
+
+@app.post("/api/study-plans", dependencies=[Depends(enforce_chat_rate_limit)])
+def draft_study_plan(request: PlanRequest, agent: StudyAgent = Depends(get_study_agent)):
+    return agent.run(request)
+
+
+@app.get("/api/study-plans")
+def study_plans(course: str = Query(min_length=1, max_length=80),
+                store: StudyStore = Depends(get_study_store)):
+    return store.list(course)
+
+
+@app.get("/api/study-plans/{plan_id}")
+def study_plan(plan_id: str, store: StudyStore = Depends(get_study_store)):
+    try:
+        return store.get(plan_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="计划不存在。") from exc
+
+
+@app.post("/api/study-plans/{plan_id}/confirm",
+          dependencies=[Depends(enforce_admin_rate_limit)])
+def confirm_study_plan(plan_id: str, request: Confirmation,
+                       store: StudyStore = Depends(get_study_store)):
+    try:
+        return store.confirm(plan_id, request.version)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="计划不存在。") from exc
+
+
+@app.patch("/api/study-plans/{plan_id}/tasks/{task_id}",
+           dependencies=[Depends(enforce_admin_rate_limit)])
+def update_study_task(plan_id: str, task_id: str, request: TaskUpdate,
+                      store: StudyStore = Depends(get_study_store)):
+    try:
+        return store.set_task(plan_id, task_id, request.done, request.version)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="计划或任务不存在。") from exc
 
 
 @app.get(

@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     rag_chunk_chars: int = Field(default=1600, ge=100, le=2000)
     rag_chunk_overlap: int = Field(default=200, ge=0)
     rag_index_max_embedding_tokens: int = Field(default=5_000_000, ge=1)
+    agent_run_budget_usd: float = Field(default=0.05, gt=0, le=0.05)
+    agent_daily_budget_usd: float = Field(default=0.50, gt=0, le=0.50)
+    agent_max_turns: int = Field(default=6, ge=1, le=6)
+    agent_deadline_seconds: float = Field(default=120, gt=0, le=120)
+    agent_request_timeout_seconds: float = Field(default=20, gt=0, le=20)
 
     model_config = SettingsConfigDict(
         env_file=(PROJECT_ROOT / ".env", ".env"),
