@@ -27,7 +27,7 @@ hybrid retrieval and citation core, with File Search available as a baseline.
 | Ingestion | PDF/PPTX/DOCX/TXT/MD discovery, SHA-256 change detection, incremental upload, replacement, deletion, and index preview |
 | Product | Course filters, lecture/tutorial scope, multi-turn history, source inspection, feedback, document management, and responsive UI |
 | Safety | File extension/signature/size/path validation, prompt-injection resistance, bounded retries, per-IP demo limits, and server-only secrets |
-| Evaluation | 13 labelled bilingual cases covering retrieval, concepts, refusals, citations, latency, token usage, and cost |
+| Evaluation | 13 legacy course cases plus 50 fictional source-checked draft cases, frozen dev/holdout splits, three-engine comparisons, failure analysis, and hash-bound human review |
 | Engineering | Typed API models, backend and public-route tests, frontend type checking/build, shared-core drift checks, Docker development, and GitHub Actions CI |
 | Privacy | API keys, raw course files, telemetry, conversations, and remote index state are excluded from Git |
 
@@ -195,12 +195,15 @@ python -m app.cli eval --engine hybrid --output-dir ../evals/reports/hybrid
 python -m app.cli eval --engine hybrid --no-rerank --output-dir ../evals/reports/hybrid-no-rerank
 ```
 
-No quality improvement is claimed until these comparisons are run. The existing
-13-case evaluator is a file-level proxy: its legacy retrieval hit metric counts
-expected files found in citations or evidence, citation precision checks expected
-filenames, and keyword recall checks substrings. It does not measure passage recall
-or semantic entailment. The historical evaluation above describes the hosted baseline,
-not the new hybrid engine.
+The public benchmark now has 50 source-checked **draft**, not human-reviewed, cases:
+30 development and 20 frozen holdout. It compares File Search, hybrid without
+reranking, and hybrid with reranking. Scoring v2 separates retrieved evidence from
+citations, counts missing citations as zero precision, reports coverage and P50/P95,
+and supports hash-bound human correctness/faithfulness labels. No semantic accuracy
+claim is made from keywords or quote presence. The historical 13-course-case snapshot
+above used legacy metrics; do not compare its scores directly with v2 or the fictional
+corpus. See [the evaluation protocol](evals/README.md) for free validation, bounded
+paid runs, failure taxonomy, paired comparisons and the manual-review rubric.
 
 ### Hosted File Search indexing
 

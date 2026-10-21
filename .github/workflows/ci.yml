@@ -31,6 +31,8 @@ jobs:
         run: python -m ruff check app tests ../frontend/api scripts/export_demo_index.py
       - name: Test
         run: python -m unittest discover -s tests -v
+      - name: Validate fictional evaluation dataset (no API calls)
+        run: python -m app.benchmark --validate
 
   frontend:
     name: Frontend checks
