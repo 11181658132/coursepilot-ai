@@ -23,6 +23,17 @@ function mutation(cookie: string, value: object = body, target = url, method = "
 }
 
 describe("public Agent gateway", () => {
+  it("signs recovery as a separate non-generation operation with the path-owned ID", async () => {
+    const cookie = await session(); fetcher.mockClear();
+    const planId = `v1${"a".repeat(64)}_${"b".repeat(32)}`;
+    const path = [planId, "recover"];
+    const response = await POST(mutation(cookie, { confirmed: true, version: 3, plan_id: "forged" }, `${url}/${path.join("/")}`), context(path));
+    expect(response.status).toBe(200);
+    const submission = JSON.parse(fetcher.mock.calls.at(-1)![1].body);
+    expect(submission.action).toBe("recover");
+    expect(submission.data).toEqual({ confirmed: true, version: 3, plan_id: planId });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("fails closed when persistence is not configured", async () => {
     vi.stubEnv("DATABASE_URL", "");
     const response = await GET(new Request(`${url}?course=DEMO101`), context());

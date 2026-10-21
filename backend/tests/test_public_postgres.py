@@ -6,12 +6,13 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 from app.services.public_study_store import PgConnection, PublicStudyStore
 from app.services.study_agent import PlanRequest
 from app.services.study_feedback import FeedbackRequest
-from app.services.study_store import StudyBudgetExceeded
+from app.services.study_store import StudyBudgetExceeded, StudyConflict
 
 DSN = os.environ.get("COURSEPILOT_TEST_DATABASE_URL", "")
 
@@ -93,6 +94,33 @@ class PublicPostgresIntegrationTests(unittest.TestCase):
                 return False
         with ThreadPoolExecutor(max_workers=2) as pool:
             self.assertEqual(sum(pool.map(reserve, [(self.one, first), (self.two, second)])), 1)
+
+    def test_recovery_survives_new_connection_fences_worker_and_keeps_quota(self):
+        run, _ = self.one.start(self.request)
+        payload = self.one.payload(run)
+        payload["trace"] = [{"step": 1, "tool": "search_knowledge", "status": "running"}]
+        self.one.checkpoint(run["id"], payload)
+        self.one.reserve(run["id"], 0.02, 0.05, 0.10)
+        state = self.one.get(run["id"])
+        with patch("app.services.study_store.time.time",
+                   return_value=state["lease_expires_at"] + 1):
+            with self.assertRaises(KeyError):
+                self.two.recover(run["id"], state["version"])
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                recovered = list(pool.map(lambda _: self.one.recover(run["id"], 0), range(2)))
+        self.assertEqual([item["version"] for item in recovered], [1, 1])
+        reopened = IntegrationStore(DSN, "a" * 64, "1" * 64, self.schema)
+        snapshot = reopened.get(run["id"])
+        self.assertEqual(snapshot["status"], "interrupted")
+        self.assertEqual(snapshot["uncertain_calls"], 1)
+        self.assertEqual(snapshot["accounted_cost_usd"], 0.02)
+        with self.assertRaises(StudyConflict):
+            reopened.finish(run["id"], "draft", payload)
+        _, fresh = reopened.start(self.request)
+        self.assertFalse(fresh)
+        reopened.start(self.request.model_copy(update={"request_id": uuid.uuid4()}))
+        with self.assertRaises(StudyBudgetExceeded):
+            reopened.start(self.request.model_copy(update={"request_id": uuid.uuid4()}))
 
     def test_rotating_anonymous_visitor_preserves_ip_quota(self):
         self.one.start(self.request)

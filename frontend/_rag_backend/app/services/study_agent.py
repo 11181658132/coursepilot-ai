@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import Evidence
 from app.services.hybrid_kb import HybridKnowledgeBase, validate_answer
-from app.services.study_store import StudyBudgetExceeded, StudyStore
+from app.services.study_store import StudyBudgetExceeded, StudyConflict, StudyStore
 
 
 class StrictModel(BaseModel):
@@ -127,6 +127,8 @@ class StudyAgent:
         payload = {"request": request.model_dump(mode="json"), "trace": trace, "tasks": []}
         try:
             return self.execute(run_id, request, payload)
+        except StudyConflict:
+            return self.store.get(run_id)  # A fenced/expired worker cannot publish a late draft.
         except Exception as exc:
             # Never persist exception messages: provider errors can contain input or credentials.
             code = ("budget_limit" if isinstance(exc, StudyBudgetExceeded) else
@@ -137,7 +139,10 @@ class StudyAgent:
             }:
                 code = str(exc)
             payload["error_code"] = code
-            return self.store.finish(run_id, "failed", payload)
+            try:
+                return self.store.finish(run_id, "failed", payload)
+            except StudyConflict:
+                return self.store.get(run_id)
 
     def execute(self, run_id, request, payload):
         base = self.base or HybridKnowledgeBase(self.config.model_copy(update={
@@ -190,8 +195,9 @@ class StudyAgent:
             if call.name not in TOOL_MODELS:
                 raise AgentLimit("unknown_tool")
             args = TOOL_MODELS[call.name].model_validate_json(call.arguments)
-            event = {"step": len(payload["trace"]) + 1, "tool": call.name, "status": "rejected"}
+            event = {"step": len(payload["trace"]) + 1, "tool": call.name, "status": "running"}
             payload["trace"].append(event)
+            self.store.checkpoint(run_id, payload)
             if call.name == "list_materials":
                 listed = True
                 result = {"materials": materials[:40], "total": len(materials)}
@@ -231,6 +237,7 @@ class StudyAgent:
                 payload.update(title=args.title, tasks=sorted(tasks, key=lambda task: task["day"]))
                 return self.store.finish(run_id, "draft", payload)
             event["status"] = "succeeded"
+            self.store.checkpoint(run_id, payload)
             history.extend(item.model_dump() if hasattr(item, "model_dump") else vars(item)
                            for item in response.output)
             history.append({"type": "function_call_output", "call_id": call.call_id,

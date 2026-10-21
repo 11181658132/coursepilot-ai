@@ -48,6 +48,8 @@ class PublicStudyStoreTests(unittest.TestCase):
                       lambda: self.two.confirm(first["id"], 0),
                       lambda: self.two.set_task(first["id"], "task", True, 0),
                       lambda: self.two.reserve(first["id"], 0.02, 0.05, 0.1),
+                      lambda: self.two.recover(first["id"], 0),
+                      lambda: self.two.checkpoint(first["id"], {}),
                       lambda: self.two.settle(charge, 0)]
         for operation in operations:
             with self.assertRaises(KeyError):

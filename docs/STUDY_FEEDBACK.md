@@ -55,8 +55,10 @@ IDs. The public store checks visitor ownership for parent and child IDs before S
 Submission atomically records a running operation and advances the parent version;
 model calls happen **outside** database transactions. Replaying the exact request
 returns existing results without model calls or quota consumption. Changed payloads
-with the same request ID conflict. Interrupted operations remain visible as running;
-they are not silently restarted. Failed operations preserve original tasks.
+with the same request ID conflict. Overdue operations expose `recovery_available`;
+explicit recovery marks them `interrupted` without replaying paid calls or changing
+the active plan's tasks. Completed tool checkpoints and unknown-cost reservations
+are retained. See [Agent recovery](AGENT_RECOVERY.md). Failed operations preserve original tasks.
 
 Only an active plan can receive answers. Only `needs_review` proposals with edits
 can be confirmed. Confirmation requires the current parent version to equal the

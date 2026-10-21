@@ -3,6 +3,7 @@
 import hashlib
 import json
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -18,6 +19,10 @@ class StudyBudgetExceeded(ValueError):
 
 
 class StudyStore:
+    # Longer than the configured 120s execution deadline + 20s provider timeout.
+    # Expiry fences stale workers; recovery never replays a model/tool request.
+    RUN_LEASE_SECONDS = 180
+
     def __init__(self, path: Path):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +87,7 @@ class StudyStore:
             self.allow_start(db)
             run_id = self.new_id()
             now = datetime.now(timezone.utc).isoformat()
-            payload = {"request": body, "trace": [], "tasks": []}
+            payload = {"request": body, "trace": [], "tasks": [], **self.lease()}
             db.execute("INSERT INTO study_runs VALUES (?, ?, ?, ?, 'running', 0, ?, ?)",
                        (run_id, self.request_key(request.request_id), fingerprint, request.course,
                         now, json.dumps(payload)))
@@ -107,6 +112,8 @@ class StudyStore:
                                  (run_id,)).fetchone()
         if result.get("kind") != "feedback":
             result["feedback"] = [self.get(key) for key in result.get("feedback_ids", [])]
+        result["recovery_available"] = self.expired(result) or any(
+            item["recovery_available"] for item in result.get("feedback", []))
         return {**result, "accounted_cost_usd": round(charges[0], 8),
                 "uncertain_calls": charges[1], "api_calls": charges[2]}
 
@@ -121,11 +128,84 @@ class StudyStore:
         self.check_id(run_id)
         assert status in {"draft", "failed"}
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            state = self.running(db, run_id)
+            payload = {**self.payload(payload), "lease_expires_at": state.get("lease_expires_at"),
+                       "checkpoint_at": state.get("checkpoint_at"),
+                       "finished_at": datetime.now(timezone.utc).isoformat()}
+            if status == "failed":
+                for event in payload.get("trace", []):
+                    if event["status"] == "running":
+                        event["status"] = "failed"
             result = db.execute("UPDATE study_runs SET status=?, payload=?, version=version+1 "
                                 "WHERE id=? AND status='running'",
                                 (status, json.dumps(payload), run_id))
             if result.rowcount != 1:
                 raise StudyConflict("运行状态已改变。")
+        return self.get(run_id)
+
+    @classmethod
+    def lease(cls):
+        return {"lease_expires_at": time.time() + cls.RUN_LEASE_SECONDS,
+                "checkpoint_at": datetime.now(timezone.utc).isoformat()}
+
+    @classmethod
+    def expired(cls, state):
+        if state["status"] != "running":
+            return False
+        expires = state.get("lease_expires_at")
+        if expires is None:  # Existing pre-lease runs are recoverable without a migration.
+            expires = (datetime.fromisoformat(state["created_at"]).timestamp()
+                       + cls.RUN_LEASE_SECONDS)
+        return time.time() >= expires
+
+    def running(self, db, run_id):
+        state = self.decode(db.execute("SELECT * FROM study_runs WHERE id=?",
+                                       (run_id,)).fetchone())
+        if state["status"] != "running" or self.expired(state):
+            raise StudyConflict("运行已结束或检查点已过期，请核对已保存状态。")
+        return state
+
+    def checkpoint(self, run_id, payload):
+        self.check_id(run_id)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.running(db, run_id)
+            db.execute("UPDATE study_runs SET payload=? WHERE id=? AND status='running'",
+                       (json.dumps({**self.payload(payload), **self.lease()}), run_id))
+
+    def recover(self, run_id, version):
+        """Mark expired plan/feedback operations interrupted, never resume execution."""
+        self.check_id(run_id)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            parent = self.decode(db.execute("SELECT * FROM study_runs WHERE id=?",
+                                            (run_id,)).fetchone())
+            if parent.get("kind") == "feedback":
+                raise KeyError("Plan not found")
+            states = [parent]
+            for identifier in parent.get("feedback_ids", []):
+                self.check_id(identifier)
+                child = self.decode(db.execute("SELECT * FROM study_runs WHERE id=?",
+                                               (identifier,)).fetchone())
+                if child.get("kind") != "feedback" or child.get("parent_id") != run_id:
+                    raise KeyError("Feedback not found")
+                states.append(child)
+            expired = [state for state in states if self.expired(state)]
+            if expired and parent["version"] != version:
+                raise StudyConflict("计划已变化，请刷新后核对中断。")
+            for state in expired:
+                payload = self.payload(state)
+                payload.update(error_code="worker_interrupted",
+                               finished_at=datetime.now(timezone.utc).isoformat())
+                for event in payload.get("trace", []):
+                    if event["status"] == "running":
+                        event["status"] = "interrupted"
+                db.execute("UPDATE study_runs SET status='interrupted', payload=?, "
+                           "version=version+1 WHERE id=? AND status='running'",
+                           (json.dumps(payload), state["id"]))
+            if expired and all(state["id"] != run_id for state in expired):
+                db.execute("UPDATE study_runs SET version=version+1 WHERE id=?", (run_id,))
         return self.get(run_id)
 
     def confirm(self, run_id, version):
@@ -148,7 +228,7 @@ class StudyStore:
     def payload(state):
         return {key: value for key, value in state.items() if key not in {
             "id", "course", "status", "version", "created_at", "feedback",
-            "accounted_cost_usd", "uncertain_calls", "api_calls"}}
+            "accounted_cost_usd", "uncertain_calls", "api_calls", "recovery_available"}}
 
     def begin_feedback(self, plan_id, task_id, request):
         self.check_id(plan_id)
@@ -183,7 +263,7 @@ class StudyStore:
                        "base_version": parent["version"] + 1, "request": body,
                        "source_task": task, "remaining_tasks": [
                            t for t in parent["tasks"] if not t["done"] and t["day"] > task["day"]],
-                       "trace": [], "tasks": [], "adjustments": []}
+                       "trace": [], "tasks": [], "adjustments": [], **self.lease()}
             now = datetime.now(timezone.utc).isoformat()
             # Separate metered operation in the same schema, excluded from course plan lists.
             db.execute("INSERT INTO study_runs VALUES (?, ?, ?, ?, 'running', 0, ?, ?)",
@@ -262,6 +342,7 @@ class StudyStore:
         charge_id = self.new_id()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            state = self.running(db, run_id)
             used = db.execute("SELECT COALESCE(SUM(amount),0) FROM study_charges WHERE run_id=?",
                               (run_id,)).fetchone()[0]
             daily = db.execute("SELECT COALESCE(SUM(amount),0) FROM study_charges WHERE day=?",
@@ -271,6 +352,8 @@ class StudyStore:
             self.allow_charge(db, amount, day)
             db.execute("INSERT INTO study_charges VALUES (?, ?, ?, ?, 0)",
                        (charge_id, run_id, day, amount))
+            db.execute("UPDATE study_runs SET payload=? WHERE id=? AND status='running'",
+                       (json.dumps({**self.payload(state), **self.lease()}), run_id))
         return charge_id
 
     def settle(self, charge_id, actual):

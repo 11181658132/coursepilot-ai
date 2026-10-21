@@ -93,6 +93,11 @@ validates every action, and allows only DEMO101, at most 3 days, 90 minutes/day 
 a 400-character goal. The canonical Agent allows four model turns/two searches,
 an inter-call 38-second deadline and eight-second SDK timeout. The model cannot
 confirm or update progress. Confirmation and task updates do not invoke the model.
+Recovery also invokes no model/index: the signed `recover` action marks only
+expired 180-second plan/feedback leases interrupted. It preserves uncertain charges
+and experience quotas, fences late workers, and never resumes paid execution.
+The metadata lives in existing payload columns; no SQL migration is required.
+See [Agent recovery](AGENT_RECOVERY.md) for versioning, checkpoint and test details.
 
 PostgreSQL transaction-level advisory locks serialize **short state/budget
 transactions**, never entire model calls. Defaults are 2 new plan/feedback runs/IP/day,

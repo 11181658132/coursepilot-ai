@@ -448,6 +448,16 @@ def confirm_study_plan(plan_id: str, request: Confirmation,
         raise HTTPException(status_code=404, detail="计划不存在。") from exc
 
 
+@app.post("/api/study-plans/{plan_id}/recover",
+          dependencies=[Depends(enforce_admin_rate_limit)])
+def recover_study_plan(plan_id: str, request: Confirmation,
+                       store: StudyStore = Depends(get_study_store)):
+    try:
+        return store.recover(plan_id, request.version)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="计划不存在。") from exc
+
+
 @app.patch("/api/study-plans/{plan_id}/tasks/{task_id}",
            dependencies=[Depends(enforce_admin_rate_limit)])
 def update_study_task(plan_id: str, task_id: str, request: TaskUpdate,

@@ -84,6 +84,16 @@ class PublicAgentWorkerTests(unittest.TestCase):
         self.store.confirm_feedback.assert_called_once_with("plan", "feedback", 3)
         self.base.assert_not_called()
 
+    def test_recovery_does_not_load_model_or_index_and_requires_confirmation(self):
+        body = self.envelope("recover", {"plan_id": "plan", "confirmed": True, "version": 3})
+        worker.handle(body, self.factory, self.base)
+        self.store.recover.assert_called_once_with("plan", 3)
+        self.base.assert_not_called()
+        body["data"]["confirmed"] = False
+        with self.assertRaises(ValueError):
+            worker.handle(body, self.factory, self.base)
+        self.assertEqual(self.store.recover.call_count, 1)
+
     def test_feedback_rejects_large_answer_or_foreign_course_before_model(self):
         body = self.envelope("feedback", {"plan_id": "plan", "task_id": "task",
             "request_id": str(uuid.uuid4()), "version": 2, "answer": "x" * 401})

@@ -6,7 +6,7 @@ import TaskFeedback from "./study-feedback";
 import RequestStatus from "./request-status";
 
 type Props = { apiUrl: string; demoMode: boolean; courses: { course: string }[]; onSource: (citation: StudyCitation) => void; initialCourse?: string; initialGoal?: string; onBusyChange?: (busy: boolean) => void };
-const statusLabel = { running: "生成中", draft: "待你确认", active: "已确认", failed: "未生成计划" };
+const statusLabel = { running: "执行中 / 待核对", draft: "待你确认", active: "已确认", failed: "未生成计划", interrupted: "已中断 · 未自动重试" };
 
 export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initialCourse, initialGoal, onBusyChange }: Props) {
   const [course, setCourse] = useState(initialCourse || courses[0]?.course || "");
@@ -17,6 +17,7 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
   const [selectedId, setSelectedId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [ready, setReady] = useState(false);
   const call = <T,>(path: string, init?: RequestInit) => studyRequest<T>(apiUrl, path, init, demoMode);
   const pending = useRef<{ key: string; id: string } | null>(null);
@@ -43,7 +44,7 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
   }
 
   async function generate(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); setBusy(true); setError(""); setNotice("");
     const key = JSON.stringify({ course, goal, days, daily_minutes: minutes });
     if (pending.current?.key !== key) pending.current = { key, id: crypto.randomUUID() };
     try {
@@ -78,6 +79,7 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
           <button disabled={busy || !course || !ready}>{busy ? "正在执行，请稍候…" : pending.current ? "重试连接（复用请求）" : "生成新草稿（调用模型）"}</button></div>
       </form>
       <RequestStatus active={busy} agent />
+      {notice && <div className="notice" role="status">{notice}</div>}
       {error && <div className="error" role="alert">{error}<p>先点击「刷新已保存的运行」（不调用模型）。不要直接新建相同任务。</p></div>}
       <div className="studyLayout"><aside className="studyHistory"><h3>已保存的运行</h3>
         <button disabled={busy || !course} onClick={async () => {
@@ -97,7 +99,14 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
             {(selected.feedback?.length ?? 0) > 0 && <p>自测反馈合计估算 / 预留 ${(selected.feedback ?? []).reduce((sum, item) => sum + item.accounted_cost_usd, 0).toFixed(6)} · 未结算调用 {(selected.feedback ?? []).reduce((sum, item) => sum + item.uncertain_calls, 0)}</p>}
             {selected.status === "draft" && <><p>请先检查学习任务和引用。引用原文匹配不等于所有结论都正确，仍需你审核。</p>
               <button disabled={busy} onClick={() => mutate(`/${selected.id}/confirm`, "POST", { confirmed: true, version: selected.version })}>确认并启用这份计划</button></>}
-            {selected.status === "running" && <p>运行尚未完成。请稍后刷新；不要重复创建。若后端曾中断，此记录不会自动恢复，可明确生成新草稿。</p>}
+            {selected.checkpoint_at && <p>最近检查点：{new Date(selected.checkpoint_at).toLocaleString()}</p>}
+            {selected.status === "running" && <p>运行尚未完成，请先刷新状态。每次检查点有效期为 3 分钟；过期后可核对并结束中断记录，不会自动重新调用模型。</p>}
+            {selected.recovery_available && <div className="notice"><p>计划或自测反馈的检查点已过期，可能发生中断。核对操作只会把过期运行标记为中断，保留工具步骤、学习进度和未结算费用预留；不返还体验次数。</p><button disabled={busy} onClick={() => mutate(`/${selected.id}/recover`, "POST", { confirmed: true, version: selected.version })}>核对并结束过期运行（不调用模型）</button></div>}
+            {selected.status === "interrupted" && <div className="notice"><p>本次运行已中断，旧请求不会重新执行。已完成步骤与费用预留保留，未启用任何计划任务。重新生成属于新请求，可能计费。</p><button disabled={busy} onClick={() => {
+              pending.current = null; setCourse(selected.course); setGoal(selected.request.goal);
+              setDays(selected.request.days); setMinutes(selected.request.daily_minutes);
+              setError(""); setNotice("已填回原目标；如需新请求，请检查后点击「生成新草稿」。这一步没有调用模型。");
+            }}>填回原目标，准备新草稿</button></div>}
             {selected.status === "failed" && <div className="error">本次未生成有效计划（{selected.error_code}）。没有启用任何任务。请检查索引、API 配置或费用限制；再次生成将使用新请求并可能计费。</div>}
           </div>
           <details className="studyTrace"><summary>查看工具执行记录（{selected.trace.length} 步）</summary><ol>{selected.trace.map(step => <li key={step.step}>{step.tool} · {step.status}{step.evidence_count !== undefined ? ` · ${step.evidence_count} 条证据` : ""}</li>)}</ol></details>

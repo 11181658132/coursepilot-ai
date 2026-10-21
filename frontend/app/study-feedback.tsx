@@ -9,10 +9,11 @@ type Props = { plan: StudyPlan; task: StudyTask; apiUrl: string; demoMode: boole
 
 export default function TaskFeedback({ plan, task, apiUrl, demoMode, busy, onPlan, onBusy, onError, onSource }: Props) {
   const [answer, setAnswer] = useState("");
+  const [prepared, setPrepared] = useState(false);
   const pending = useRef<{ key: string; id: string; version: number } | null>(null);
   const entries = (plan.feedback ?? []).filter(item => item.task_id === task.id);
   async function submit(event: FormEvent) {
-    event.preventDefault(); onBusy(true); onError("");
+    event.preventDefault(); onBusy(true); onError(""); setPrepared(false);
     const key = JSON.stringify({ plan: plan.id, task: task.id, answer: answer.trim() });
     if (pending.current?.key !== key) pending.current = { key, id: crypto.randomUUID(), version: plan.version };
     try {
@@ -38,6 +39,7 @@ export default function TaskFeedback({ plan, task, apiUrl, demoMode, busy, onPla
         minLength={2} maxLength={demoMode ? 400 : 1000} rows={3} required disabled={busy || plan.status !== "active"}
         placeholder="用自己的话回答。不要输入真实个人信息。" /></label>
       <p className="feedbackDisclaimer">AI 形成性反馈，不是老师评分或标准答案。可能判断错误，请结合课程原文核查。提交会调用模型，确认调整不会调用模型。</p>
+      {prepared && <p className="notice">已填回原答案，尚未重新提交。再次提交会创建新请求，可能计费。</p>}
       <button disabled={busy || plan.status !== "active" || answer.trim().length < 2}>
         {busy ? "处理中…" : pending.current ? "重试反馈连接（复用请求）" : "提交答案，获取证据反馈"}</button>
     </form>
@@ -46,6 +48,10 @@ export default function TaskFeedback({ plan, task, apiUrl, demoMode, busy, onPla
       <p className="feedbackCost">本次估算 / 预留 ${entry.accounted_cost_usd.toFixed(6)} · 未结算调用 {entry.uncertain_calls}</p>
       {!!entry.trace?.length && <details><summary>查看本次反馈工具记录</summary><ol>{entry.trace.map(step => <li key={step.step}>{step.tool} · {step.status}{step.evidence_count !== undefined ? ` · ${step.evidence_count} 条证据` : ""}</li>)}</ol></details>}
       {entry.status === "running" && <p role="status">反馈生成中，请刷新查看；不要重复创建。</p>}
+      {entry.recovery_available && <p className="notice">本次反馈检查点已过期。请在计划顶部核对并结束过期运行；原计划不会自动改变。</p>}
+      {entry.status === "interrupted" && <div className="notice"><p>反馈已中断，未修改原计划。已完成步骤和未结算费用预留保留，不会自动重试。</p><button type="button" disabled={busy || plan.status !== "active"} onClick={() => {
+        pending.current = null; setAnswer(entry.request.answer); setPrepared(true);
+      }}>填回本次答案（不调用模型）</button></div>}
       {entry.status === "failed" && <p className="error">本次反馈未完成（{entry.error_code}），未修改原计划。再次提交可能计费。</p>}
       {entry.assessment && <>
         <strong className={`verdict ${entry.assessment.verdict}`}>{({ mostly_correct: "AI 建议：基本理解", needs_review: "AI 建议：值得复习", uncertain: "暂时无法可靠判断" })[entry.assessment.verdict]}</strong>

@@ -437,11 +437,18 @@ task-update, shell, external URL or document-write tool**. It cannot execute
 instructions found in course material outside this allowlist. Semantic grounding
 still requires human review; source matching alone cannot guarantee correctness.
 
-State: `running → draft → active`, or `running → failed`. Drafts are persisted
+State: `running → draft → active`, `running → failed`, or explicitly recovered
+`running → interrupted`. Drafts are persisted
 previews, not enabled tasks. Request UUID + payload fingerprints prevent duplicate
 generation on retries, confirmation is idempotent, and version checks prevent
 overwriting concurrent progress updates. Failed runs never enable partial tasks.
-Interrupted runs remain visible as running; they do not silently restart paid work.
+Plan/feedback tool checkpoints and 180-second leases are persisted. Overdue runs
+expose a free, explicit recovery action: it marks only expired operations interrupted,
+keeps completed steps and uncertain cost reservations, and fences late workers from
+new calls or draft publication. Old request IDs never replay model execution.
+Filling back a goal/answer does not call the model; a new submission may incur charges.
+Recovery is not automatic continuation or provider cancellation. See
+[Agent recovery design and tests](docs/AGENT_RECOVERY.md).
 
 Limits: 6 model turns, 2 searches, 120-second loop deadline checked between calls,
 20-second SDK request timeout, no automatic retries, bounded payload/output sizes.
@@ -454,6 +461,7 @@ limit as well. The daily cap is local-database-wide, not per visitor.
 
 API: `POST/GET /api/study-plans`, `GET /api/study-plans/{id}`,
 `POST /api/study-plans/{id}/confirm` with explicit `confirmed: true` + version,
+`POST /api/study-plans/{id}/recover` with the same explicit confirmation + version,
 and `PATCH /api/study-plans/{id}/tasks/{task_id}` with `done` + version.
 See [Agent regression tests](backend/tests/test_study_agent.py) for confirmation,
 idempotency, concurrency, scope/allowlist enforcement, bad citations, loop limits,

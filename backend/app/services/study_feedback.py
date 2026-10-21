@@ -17,7 +17,7 @@ from app.services.study_agent import (
     SourceQuote,
     StrictModel,
 )
-from app.services.study_store import StudyBudgetExceeded
+from app.services.study_store import StudyBudgetExceeded, StudyConflict
 
 
 class FeedbackRequest(StrictModel):
@@ -61,13 +61,18 @@ class FeedbackAgent:
         payload = self.store.payload(state)
         try:
             self.execute(state["id"], payload)
+        except StudyConflict:
+            pass  # Recovery/lease fencing wins over any late model result.
         except Exception as exc:
             payload["error_code"] = ("budget_limit" if isinstance(exc, StudyBudgetExceeded)
                                      else "feedback_failed")
             # No raw provider exception bodies or rejected answers in logs/telemetry.
             payload.pop("assessment", None)
             payload["adjustments"] = []
-            self.store.finish(state["id"], "failed", payload)
+            try:
+                self.store.finish(state["id"], "failed", payload)
+            except StudyConflict:
+                pass
         return self.store.get(plan_id)
 
     def execute(self, run_id, payload):
@@ -118,8 +123,9 @@ class FeedbackAgent:
                 raise AgentLimit("invalid_tool_order")
             call = calls[0]
             args = TOOLS[expected].model_validate_json(call.arguments)
-            event = {"step": turn + 1, "tool": expected, "status": "rejected"}
+            event = {"step": turn + 1, "tool": expected, "status": "running"}
             payload["trace"].append(event)
+            self.store.checkpoint(run_id, payload)
             if turn == 0:
                 rows = base.retrieve(parent["course"], "all", args.query)
                 for row in rows[:4]:
@@ -128,6 +134,7 @@ class FeedbackAgent:
                                              source_id=f"S{len(evidence) + 1}"))
                     evidence[-1].text = evidence[-1].text[:2000]
                 event.update(status="succeeded", evidence_count=len(evidence))
+                self.store.checkpoint(run_id, payload)
                 if not evidence:
                     payload["assessment"] = {"verdict": "uncertain", "explanation":
                         "没有检索到足够的课程证据，无法可靠评估本次答案。", "weaknesses": [],
