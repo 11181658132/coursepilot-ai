@@ -8,6 +8,8 @@ describe("request recovery guidance", () => {
     expect(requestError(429, "", "12")).toContain("至少等待 12 秒");
     expect(requestError(429)).toContain("刷新不会恢复额度");
     expect(requestError(429, "", "invalid")).not.toContain("NaN");
+    expect(requestError(429, "", "10", "rag")).toContain("每天 5 次");
+    expect(requestError(429, "", "10", "rag")).not.toContain("Agent");
   });
   it("distinguishes conflicts, lost sessions, and uncertain upstream outcomes", () => {
     expect(requestError(409)).toContain("先刷新");

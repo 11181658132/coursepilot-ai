@@ -95,6 +95,8 @@ of courses increases store-management overhead. Local SQLite and JSON are ideal 
 a single-user desktop workflow but are not suitable for horizontally scaled or
 multi-tenant deployments. A production evolution would introduce authentication,
 PostgreSQL/pgvector, object storage, durable job queues, tracing, and tenant-aware
-authorization. The public demo currently uses serverless in-memory counters, so the
-OpenAI project hard spend limit is its final cost boundary until a durable Redis/KV
-rate limiter is provisioned.
+authorization. The public demo's RAG request limits and Agent quotas are now stored
+in the dedicated PostgreSQL database. A signed, quota-only Python worker reserves
+daily IP-digest and monthly global counts atomically before either RAG engine is
+called. It never loads a model or index and fails closed on database errors. These
+request caps are not dollar-spend guarantees; retain provider/hosting controls.

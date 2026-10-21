@@ -35,11 +35,15 @@ hybrid retrieval and citation core, with File Search available as a baseline.
 
 The deployed demo uses a precomputed fictional hybrid index (and a dedicated fictional
 vector store for the optional File Search baseline), and accepts real questions
-through a same-origin Next.js Route Handler. It limits each visitor to five questions
-per day, caps the application at 300 questions per month, bounds question and answer
-length, validates scope, and returns safe errors without logging prompts. Provider-level
-project spend limits remain the final cost boundary because serverless in-memory limits
-can reset when instances are replaced.
+through a same-origin Next.js Route Handler. Hybrid and File Search share durable
+PostgreSQL limits of five accepted requests per network address per UTC day and
+300 globally per UTC month. Atomic reservations precede model calls; uncertain,
+failed or timed-out attempts are not automatically refunded or retried. Restarting
+an instance or clearing cookies does not reset these counters. Database failure
+stops model requests; the UI reads actual quota through a free, non-consuming GET.
+No raw IPs, questions or answers are stored by the quota service. These are request
+caps, not a dollar-billing guarantee; retain provider-side spend controls.
+See [durable RAG limits](docs/RAG_RATE_LIMITS.md) for privacy and rollout boundaries.
 
 Public requests emit privacy-safe structured telemetry for request IDs, latency,
 token use, tool calls, citation count, and estimated cost. Prompts, answers, retrieved
@@ -413,9 +417,9 @@ GitHub Actions repeats these checks on every push and pull request.
 - Conversation history is intentionally local-first. A multi-user deployment
   needs authentication, PostgreSQL, tenant isolation, migrations, and backups.
 - Public inference is isolated from private course data: it uses a dedicated OpenAI
-  project and fictional files. Its in-memory application counters are intentionally
-  backed by a provider hard spend limit; durable multi-instance rate limiting is the
-  next production step.
+  project and fictional files. RAG request limits and Agent quotas use the existing
+  dedicated demo PostgreSQL database, but are separate namespaces/budgets. Request
+  caps are not provider billing or hosting-spend guarantees.
 
 ## Study-plan Agent (local and public demo)
 

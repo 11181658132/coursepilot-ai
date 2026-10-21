@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlparse
 
+from app.services.public_rag_limits import PublicRagLimits
 from app.services.public_study_store import PgConnection, PublicStudyStore
 from app.services.study_agent import PlanRequest
 from app.services.study_feedback import FeedbackRequest
@@ -121,6 +122,38 @@ class PublicPostgresIntegrationTests(unittest.TestCase):
         reopened.start(self.request.model_copy(update={"request_id": uuid.uuid4()}))
         with self.assertRaises(StudyBudgetExceeded):
             reopened.start(self.request.model_copy(update={"request_id": uuid.uuid4()}))
+
+    def rag_limits(self):
+        limiter = PublicRagLimits(DSN)
+        limiter.connect = self.one.connect  # Same disposable test schema and real PG adapter.
+        return limiter
+
+    def test_rag_daily_limit_is_atomic_and_survives_fresh_connections(self):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda _: self.rag_limits().quota("d" * 64, consume=True),
+                                    range(8)))
+        self.assertEqual(sum(item["allowed"] for item in results), 5)
+        status = self.rag_limits().quota("d" * 64)
+        self.assertFalse(status["allowed"])
+        self.assertEqual(status["remaining_today"], 0)
+        self.assertEqual(status["remaining_month"], 295)
+        # Existing Agent quota remains independent in the shared table.
+        self.one.start(self.request)
+
+    def test_rag_monthly_limit_is_atomic_across_ips_and_denials_do_not_increment(self):
+        from datetime import datetime, timezone
+
+        month = datetime.now(timezone.utc).replace(day=1).date().isoformat()
+        with self.one.connect() as db:
+            db.execute("INSERT INTO public_demo_limits VALUES ('rag:global', ?, 299)", (month,))
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda i: self.rag_limits().quota(f"{i:064x}", consume=True),
+                                    range(4)))
+        self.assertEqual(sum(item["allowed"] for item in results), 1)
+        status = self.rag_limits().quota("f" * 64, consume=True)
+        self.assertEqual(status["reason"], "monthly")
+        self.assertEqual(status["remaining_today"], 5)
+        self.assertEqual(status["remaining_month"], 0)
 
     def test_rotating_anonymous_visitor_preserves_ip_quota(self):
         self.one.start(self.request)

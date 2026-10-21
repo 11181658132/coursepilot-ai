@@ -53,7 +53,8 @@ files, local SQLite databases, reports, telemetry or private paths may be deploy
 
 4. Before deploying, run backend tests/lint, Agent contracts, frontend typecheck,
    tests/build and `node frontend/scripts/prepare-rag.mjs --check`. The bundle now
-   contains 17 allowlisted canonical Python modules, including the shared Agents.
+   contains 18 allowlisted canonical Python modules, including the shared Agents
+   and durable RAG quota service.
 5. Run the real PostgreSQL integration tests in CI's disposable Postgres service.
    They are deliberately skipped locally when no explicit loopback test DB is
    configured. For local PostgreSQL testing, use a disposable `coursepilot_test`
@@ -105,8 +106,9 @@ transactions**, never entire model calls. Defaults are 2 new plan/feedback runs/
 $0.50/month globally (UTC). Failed/unknown provider calls keep reservations.
 These are conservative **API list-price estimates**, not a provider billing
 guarantee, and they do not cap Vercel/database hosting charges. Set appropriate
-provider/hosting controls and keep the existing RAG costs separate: the older RAG
-endpoint's in-memory request counter is not made durable by this Agent change.
+provider/hosting controls and keep RAG costs separate: the RAG endpoint now has
+its own durable 5/IP/day and 300/global/month request counters, not the Agent's
+USD reservation budget. See [RAG quota details](RAG_RATE_LIMITS.md).
 
 Session/worker secrets and DB URLs are never returned or logged. Store exceptions
 and provider bodies are replaced with safe error messages. Do not enable database

@@ -13,6 +13,7 @@ const modules = [
   "services/retrieval.py", "services/state.py", "services/telemetry.py",
   "services/study_agent.py", "services/study_store.py", "services/public_study_store.py",
   "services/study_feedback.py",
+  "services/public_rag_limits.py",
 ];
 for (const name of modules) {
   const content = await readFile(path.join(root, "backend/app", name));

@@ -21,7 +21,7 @@ type Message = {
 type Answer = {
   answer: string; response_id?: string; request_id?: string; conversation_id?: string; message_id: string;
   citations?: Citation[]; evidence?: Evidence[]; latency_ms?: number;
-  estimated_cost_usd?: number; remaining_today?: number;
+  estimated_cost_usd?: number; remaining_today?: number; remaining_month?: number;
 };
 type DocumentRecord = {
   path: string; filename: string; course: string; material_type: "lecture" | "tutorial" | "other";
@@ -81,12 +81,35 @@ export default function Home() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [syncPreview, setSyncPreview] = useState<SyncReport | null>(null);
   const [demoThreads, setDemoThreads] = useState<Record<string, Message[]>>({});
-  const [remainingToday, setRemainingToday] = useState(5);
+  const [remainingToday, setRemainingToday] = useState<number | null>(null);
+  const [remainingMonth, setRemainingMonth] = useState<number | null>(null);
+  const [quotaLoading, setQuotaLoading] = useState(false);
+  const [quotaError, setQuotaError] = useState("");
   const [engine, setEngine] = useState<"file_search" | "hybrid">("hybrid");
   const [indexJob, setIndexJob] = useState<IndexJob | null>(null);
   const lastJobState = useRef("");
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
+
+  async function refreshDemoQuota(signal?: AbortSignal) {
+    setQuotaLoading(true); setQuotaError("");
+    try {
+      const response = await fetch("/api/demo/chat", { cache: "no-store", signal });
+      const data = await response.json();
+      if (!response.ok || !Number.isInteger(data.remaining_today) || data.remaining_today < 0 || data.remaining_today > 5
+          || !Number.isInteger(data.remaining_month) || data.remaining_month < 0 || data.remaining_month > 300) throw new Error("Quota unavailable");
+      if (!signal?.aborted) { setRemainingToday(data.remaining_today); setRemainingMonth(data.remaining_month); }
+    } catch {
+      if (!signal?.aborted) { setRemainingToday(null); setRemainingMonth(null); setQuotaError("额度暂不可用，已暂停提问。请稍后免费刷新。"); }
+    } finally { if (!signal?.aborted) setQuotaLoading(false); }
+  }
+
+  useEffect(() => {
+    if (!DEMO_MODE) return;
+    const controller = new AbortController();
+    void refreshDemoQuota(controller.signal);
+    return () => controller.abort();
+  }, []);
 
   async function loadConversations() {
     if (DEMO_MODE) {
@@ -215,7 +238,8 @@ export default function Home() {
   async function ask(event: FormEvent) {
     event.preventDefault();
     const submittedQuestion = question.trim();
-    if (!submittedQuestion || !course) return;
+    if (!submittedQuestion || !course || loading || (DEMO_MODE &&
+      (quotaLoading || remainingToday === null || remainingToday === 0 || remainingMonth === null || remainingMonth === 0))) return;
     setLoading(true);
     setError("");
     if (DEMO_MODE) {
@@ -241,7 +265,13 @@ export default function Home() {
           }),
         });
         const data = await response.json() as Answer & { detail?: string };
-        if (!response.ok) throw new Error(requestError(response.status, data.detail, response.headers.get("Retry-After")));
+        if (typeof data.remaining_today === "number") setRemainingToday(data.remaining_today);
+        if (typeof data.remaining_month === "number") setRemainingMonth(data.remaining_month);
+        if (response.status === 503 && typeof data.remaining_today !== "number") {
+          setRemainingToday(null); setRemainingMonth(null);
+          setQuotaError("额度服务暂不可用，已暂停提问。请稍后免费刷新。");
+        }
+        if (!response.ok) throw new Error(requestError(response.status, data.detail, response.headers.get("Retry-After"), "rag"));
         const assistantMessage: Message = {
           id: data.message_id,
           conversation_id: conversationId,
@@ -273,6 +303,7 @@ export default function Home() {
         setRemainingToday(data.remaining_today ?? remainingToday);
         setQuestion("");
       } catch (reason) {
+        if (reason instanceof TypeError || reason instanceof SyntaxError) { setRemainingToday(null); setRemainingMonth(null); }
         setError(reason instanceof TypeError ? requestError(503) : reason instanceof Error ? reason.message : "发生未知错误");
       } finally {
         setLoading(false);
@@ -528,7 +559,7 @@ export default function Home() {
           </select>
           {engine === "hybrid" && <span className="engineHint">BM25 + 向量检索 · 来源可追溯</span>}
         </label>}
-        {DEMO_MODE && <div className="demoBanner"><span aria-hidden="true">◉</span><strong>真实 AI · 虚构资料</strong><span>{view === "agent" ? "仅使用 DEMO101 示例资料，不包含真实课程。" : "不包含真实课程文件 · 每位访客每天可提问 5 次"}</span></div>}
+        {DEMO_MODE && <div className="demoBanner"><span aria-hidden="true">◉</span><strong>真实 AI · 虚构资料</strong><span>{view === "agent" ? "仅使用 DEMO101 示例资料，不包含真实课程。" : "虚构资料 · 每个网络地址每天最多 5 次问答请求（UTC）"}</span></div>}
       </div>
 
       {view === "agent" ? <StudyAgent apiUrl={API_URL} demoMode={DEMO_MODE} courses={courses} onSource={inspectSource} initialCourse={course} initialGoal={agentGoal} onBusyChange={setAgentBusy} /> : view === "chat" ? <section className="workspace">
@@ -567,7 +598,7 @@ export default function Home() {
             <div><strong>{selected.indexed_count}</strong><span>已索引</span></div>
           </div>}
           <div className="privacy">{DEMO_MODE
-            ? `问题只用于生成当前回答，不写入项目数据库。今天还可提问 ${remainingToday} 次。`
+            ? <>问题不写入项目数据库；仅保存网络地址摘要与请求计数。<p role="status">{quotaLoading ? "正在读取体验额度…" : quotaError || (remainingToday === null ? "请刷新体验额度后提问。" : remainingMonth === 0 ? "本月公开问答总额度已用完。" : `当前网络今天剩余 ${remainingToday} 次问答请求。`)}</p><p>两种检索共用额度。受理请求即计数，超时或上游失败不自动返还。清除 Cookie 或刷新网页不会恢复额度。</p><button type="button" disabled={loading || quotaLoading} onClick={() => void refreshDemoQuota()}>刷新体验额度（免费）</button></>
             : "聊天和反馈仅保存在本机，不会进入代码仓库。"}</div>
         </aside>
 
@@ -614,7 +645,7 @@ export default function Home() {
               {DEMO_SUGGESTIONS.map((suggestion, index) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}><span className="suggestionNumber">0{index + 1}</span>{suggestion}<span className="suggestionArrow" aria-hidden="true">↗</span></button>)}
             </div>}
             <textarea id="question" maxLength={600} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={DEMO_MODE ? "可以询问 RAG、检索评测、安全与成本控制。" : "例如：解释 Week 3 中的核心模型，并比较它与 Week 2 方法的区别。"} rows={5} />
-            <div className="formFooter"><span><span aria-hidden="true">◇</span> {DEMO_MODE ? "点击后调用模型 · 消耗 1 次问答额度" : "基于课程证据回答 · 附带来源引用"}</span><button disabled={loading || !course || !question.trim()}>{loading ? "正在等待回答…" : "开始提问 ↗"}</button></div>
+            <div className="formFooter"><span><span aria-hidden="true">◇</span> {DEMO_MODE ? "点击后调用模型 · 消耗 1 次问答额度" : "基于课程证据回答 · 附带来源引用"}</span><button disabled={loading || !course || !question.trim() || (DEMO_MODE && (quotaLoading || remainingToday === null || remainingToday === 0 || remainingMonth === null || remainingMonth === 0))}>{loading ? "正在等待回答…" : "开始提问 ↗"}</button></div>
           </form>
           <RequestStatus active={loading} />
           {error && <div className="error" role="alert">{error}</div>}
