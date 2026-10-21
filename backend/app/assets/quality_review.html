@@ -1,0 +1,62 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
+<title>CoursePilot · 本地 RAG 人工审核</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f5f6fa;color:#292a3d;font:14px/1.8 system-ui,sans-serif}
+main{max-width:1100px;margin:32px auto;padding:0 22px}h1{font-size:26px}h2{font-size:19px}
+.notice{background:#f0ebfa;border:1px solid #ded4ed;padding:16px;border-radius:12px}
+.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:18px 0}button,select,input,textarea{font:inherit;padding:9px;border:1px solid #dad9e5;border-radius:8px;background:white}button{cursor:pointer;color:#6752a0}button:disabled{opacity:.4;cursor:not-allowed}
+article{background:#fff;border:1px solid #e4e3ed;border-radius:14px;padding:24px;margin:18px 0}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:420px;overflow:auto}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}label{display:grid;gap:6px}textarea{width:100%;min-height:85px}summary{cursor:pointer;color:#736089}#message{color:#806534}
+@media(max-width:700px){.cols{grid-template-columns:1fr}article{padding:16px}}
+</style></head><body><main><h1>RAG 质量审核工作台</h1>
+<p class="notice">完全本地 · 不调用模型、不上传资料。页面隐藏引擎、自动分数、费用与耗时。
+这是开发集审核，不是保留集验收。参考答案仍是草稿：请独立核对原文，发现参考标签有问题时选择“参考标签”。
+机器标签是排查线索，不是因果结论。AI 不能代替你填写“人工审核”。</p>
+<details><summary>审核标准与保存方式（请先读）</summary><ul>
+<li>答案正确：是否准确回答问题、包含必要信息；缺资料时恰当拒答也可正确。出现参考答案关键词不等于正确。</li>
+<li>证据支持：回答中的实质性主张是否被展示的课程原文支持，引用是否支持相应主张；引用逐字存在不等于支持结论。</li>
+<li>无法判断时保留“未判断”，不要猜；错误评分或参考标签争议请写理由。合适的拒答不必为了“有引用”而引用。</li>
+<li>所有题均保留，包括自动通过题。当前排序优先排查失败题；审核样本不是随机抽样，不能当总体准确率。</li>
+<li>离开前下载审核 JSONL。页面不使用浏览器持久化；关闭或刷新会丢失未导出的评分。已有文件可在本页导入继续。</li>
+</ul></details>
+<div class="bar"><label>审核人（你的别名）<input id="reviewer" maxlength="80" autocomplete="off"></label>
+<label><span>人工声明</span><span><input id="attested" type="checkbox"> 我亲自阅读并核对了原文</span></label>
+<button id="download">下载已完成审核 JSONL</button><label>恢复已有审核<input id="restore" type="file" accept=".jsonl,.json"></label></div>
+<div class="bar"><button id="previous">← 上一条</button><span id="progress"></span><button id="next">下一条 →</button></div>
+<p id="message" role="status"></p><article><h2 id="question"></h2><p id="case"></p><h3>待审核回答</h3><pre id="answer"></pre>
+<details><summary>模型返回的引用</summary><pre id="citations"></pre></details>
+<details><summary>检索证据（隐藏自动评分）</summary><pre id="evidence"></pre></details>
+<details><summary>参考答案与定位引文 · 未经人工确认的草稿</summary><pre id="reference"></pre></details>
+<details><summary>完整虚构课程原文 · 独立核对依据</summary><pre id="sources"></pre></details></article>
+<article><div class="cols"><label>答案正确性<select id="correct"><option value="">未判断</option><option value="true">正确</option><option value="false">不正确 / 不完整</option></select></label>
+<label>证据支持程度<select id="supported"><option value="">未判断</option><option value="true">所有实质性主张有依据</option><option value="false">存在无依据或不匹配主张</option></select></label></div>
+<div class="bar"><label>主要问题（人工判断）<select id="stage"><option value="uncertain">待确认</option><option value="retrieval">检索缺失 / 不完整</option><option value="answer">回答错误 / 不完整</option><option value="citation">引用不支持结论</option><option value="reference_label">参考标签有争议</option><option value="upstream">上游调用问题</option><option value="none">未发现问题</option></select></label></div>
+<label>审核理由 / 参考标签争议<textarea id="notes" maxlength="5000"></textarea></label></article>
+<script type="application/json" id="packet">__PACKET__</script><script>
+"use strict";
+const packet=JSON.parse(document.getElementById('packet').textContent), grades={};let index=0;
+const el=id=>document.getElementById(id), current=()=>packet.rows[index];
+function capture(){if(!current())return; const row=current();grades[row.review_key]={review_key:row.review_key,response_hash:row.response_hash,correct:el('correct').value===''?null:el('correct').value==='true',supported:el('supported').value===''?null:el('supported').value==='true',reviewer:el('reviewer').value.trim(),notes:el('notes').value,failure_stage:el('stage').value,human_attested:el('attested').checked};}
+function complete(g){return typeof g.correct==='boolean'&&typeof g.supported==='boolean'&&typeof g.reviewer==='string'&&g.reviewer.trim()&&g.human_attested===true&&((g.correct&&g.supported&&g.failure_stage!=='reference_label')||g.notes.trim());}
+function render(){const r=current();if(!r){el('question').textContent='没有可审核的已完成回答';return;}const g=grades[r.review_key]||{};
+el('question').textContent=r.question;el('case').textContent='开发题 '+r.case_id+' · 匿名回答 '+(index+1);
+el('answer').textContent=r.answer;el('citations').textContent=JSON.stringify(r.citations,null,2);
+el('evidence').textContent=JSON.stringify(r.evidence.map(x=>({filename:x.filename,source_id:x.source_id,chunk_id:x.chunk_id,text:x.text})),null,2);
+el('reference').textContent=r.reference_draft+'\n\n'+JSON.stringify(r.reference_quotes,null,2);
+el('correct').value=g.correct==null?'':String(g.correct);el('supported').value=g.supported==null?'':String(g.supported);el('notes').value=g.notes||'';el('stage').value=g.failure_stage||'uncertain';
+if(g.reviewer)el('reviewer').value=g.reviewer;el('attested').checked=g.human_attested===true;
+el('progress').textContent=(index+1)+' / '+packet.rows.length+' · 已完成 '+Object.values(grades).filter(complete).length;
+el('previous').disabled=index===0;el('next').disabled=index===packet.rows.length-1;}
+el('sources').textContent=Object.entries(packet.sources).map(([name,text])=>'===== '+name+' =====\n'+text).join('\n\n');
+el('next').onclick=()=>{capture();index++;render();};el('previous').onclick=()=>{capture();index--;render();};
+el('download').onclick=()=>{capture();const rows=Object.values(grades).filter(complete);if(!rows.length){el('message').textContent='请完成至少一条的双项评分、审核人及人工声明；负面判断需要理由。';return;}const blob=new Blob([rows.map(r=>JSON.stringify(r)).join('\n')+'\n'],{type:'application/x-ndjson'});const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download='coursepilot-human-reviews.jsonl';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);el('message').textContent='已导出 '+rows.length+' 条；请保留文件，未完成条目不导出。';render();};
+el('restore').onchange=async()=>{try{const file=el('restore').files[0];if(!file||file.size>2_000_000)throw Error();const rows=(await file.text()).split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));const valid=new Map(packet.rows.map(x=>[x.review_key,x.response_hash])),seen=new Set();for(const r of rows){if(!valid.has(r.review_key)||valid.get(r.review_key)!==r.response_hash||seen.has(r.review_key)||!complete(r))throw Error();seen.add(r.review_key);}for(const r of rows)grades[r.review_key]=r;render();el('message').textContent='已恢复 '+rows.length+' 条审核。';}catch{el('message').textContent='导入失败：文件格式、重复记录或回答指纹不匹配。';}};
+window.addEventListener('beforeunload',e=>{
+  capture();
+  if(Object.values(grades).some(g=>g.correct!==null||g.supported!==null||g.notes.trim())){
+    e.preventDefault();e.returnValue='';
+  }
+});render();
+</script></main></body></html>

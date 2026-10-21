@@ -228,6 +228,15 @@ establish private-course quality, large-corpus retrieval, or production latency.
 
 ### Targeted citation-format diagnosis · 2026-10-21
 
+For the next quality-improvement iteration, use the **offline blinded human-review
+workflow** in [RAG quality workflow](docs/RAG_QUALITY_WORKFLOW.md). It reuses cached
+development answers, prioritizes proxy failures without excluding passes, shows
+original sources, exports hash-bound human labels and compares only paired reviewed
+cases. No API calls or holdout tuning are performed. Historical reranker transitions
+are 2 fail→pass, 3 pass→fail, 17 pass→pass and 8 fail→fail; these are proxy outcomes,
+not semantic accuracy. No new human labels or quality-improvement claims are created
+automatically.
+
 The 16 historically uncited hybrid variant/case pairs were reproduced using only
 the five fictional DEMO101 files, the same model and unchanged generation prompt.
 The new responses included 9 validated answers and 7 citation-marker mismatches:

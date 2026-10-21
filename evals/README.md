@@ -105,6 +105,12 @@ large-corpus retrieval or performance on the private university-course collectio
 
 ## Human correctness and faithfulness review
 
+The local [blinded review workflow](../docs/RAG_QUALITY_WORKFLOW.md) now generates
+an offline review page and failure triage from cached development reports. It
+exports labels compatible with the commands below, but imports into a **new**
+directory by default so the historical reports remain unchanged. No holdout
+answers are included and no external API is called.
+
 ```bash
 PYTHONPATH=backend .venv/bin/python -m app.benchmark \
   --review-template evals/reports/public-benchmark/hybrid/latest.json
