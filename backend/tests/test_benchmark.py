@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -7,10 +8,21 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
-from app.benchmark import compare, resolve_public_store, validate_dataset, verify_hosted_corpus
-from app.config import PROJECT_ROOT
+from app.benchmark import (
+    DATASET,
+    VARIANTS,
+    DemoHostedBase,
+    compare,
+    corpus_hash,
+    resolve_public_store,
+    validate_dataset,
+    verify_hosted_corpus,
+)
+from app.config import PROJECT_ROOT, Settings
+from app.eval_audit import audit_suite
 from app.eval_budget import BudgetClient, BudgetExceeded, BudgetLedger
 from app.evaluation import (
+    SCORING_VERSION,
     EvalCase,
     apply_reviews,
     load_cases,
@@ -36,7 +48,7 @@ class BenchmarkTests(unittest.TestCase):
 
     def report(self):
         result = score_case(self.case, self.response)
-        return {"generated_at": "2026-10-21T00:00:00Z", "scoring_version": 2,
+        return {"generated_at": "2026-10-21T00:00:00Z", "scoring_version": SCORING_VERSION,
                 "fingerprint": "same-config", "summary": summarise([result]),
                 "results": [asdict(result)]}
 
@@ -73,6 +85,22 @@ class BenchmarkTests(unittest.TestCase):
     def test_hosted_source_verification_rejects_changed_nonwhitespace_content(self):
         with self.assertRaises(ValueError):
             verify_hosted_corpus(self.hosted_client(tampered=True), "fictional-store")
+
+    def test_hosted_adapter_reports_model_and_tool_cost_instead_of_zero(self):
+        payload = {"output": [{"type": "file_search_call", "results": []}],
+                   "usage": {"input_tokens": 100, "output_tokens": 10}}
+        response = SimpleNamespace(model_dump=lambda: payload, output_text="Not enough evidence.")
+        create = Mock(return_value=response)
+        client = SimpleNamespace(responses=SimpleNamespace(create=create))
+        with tempfile.TemporaryDirectory() as directory:
+            base = DemoHostedBase(Settings(_env_file=None, openai_api_key="test-only"), client,
+                                  "public-store", Path(directory) / "state.json")
+            result = base.chat("DEMO101", "tutorial", "What is the answer?")
+        self.assertAlmostEqual(result.estimated_cost_usd, .002515)
+        self.assertEqual(result.usage["file_search_calls"], 1)
+        self.assertEqual(create.call_args.kwargs["tool_choice"], "required")
+        filters = create.call_args.kwargs["tools"][0]["filters"]["filters"]
+        self.assertEqual(filters[-1]["value"], "tutorial")
 
     def test_stale_store_can_only_fall_back_to_one_exact_name_existing_public_store(self):
         response = httpx.Response(404, request=httpx.Request("GET", "https://api.openai.com"))
@@ -126,6 +154,21 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("invalid_quote", result.failure_categories)
         self.response.citations[0].quote = "original text"
         self.assertEqual(score_case(self.case, self.response).quote_validity, 1)
+
+    def test_pdf_line_wrapping_does_not_make_a_real_quote_invalid(self):
+        self.response.evidence[0].text = "original\n  text"
+        self.response.citations[0].quote = "original text"
+        self.assertEqual(score_case(self.case, self.response).quote_validity, 1)
+        self.response.citations[0].quote = "Original text"
+        self.assertEqual(score_case(self.case, self.response).quote_validity, 0)
+
+    def test_quote_must_belong_to_the_actual_cited_chunk_not_just_same_filename(self):
+        self.response.citations[0].chunk_id = "wrong-chunk"
+        self.response.citations[0].quote = "original text"
+        self.response.evidence[0].chunk_id = "real-chunk"
+        self.assertEqual(score_case(self.case, self.response).quote_validity, 0)
+        self.response.citations[0].quote = "   "
+        self.assertEqual(score_case(self.case, self.response).quote_validity, 0)
 
     def test_injection_canary_fails_even_when_refusal_phrase_present(self):
         self.case.should_refuse = True
@@ -244,6 +287,14 @@ class BudgetTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 BudgetLedger(Path("unused.json"), value)
 
+    def test_nonfinite_persisted_balances_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "budget.json"
+            path.write_text(json.dumps({"known_cost_usd": 0, "accounted_usd": float("nan"),
+                                        "calls": 0, "uncertain_calls": 0}))
+            with self.assertRaises(ValueError):
+                BudgetLedger(path, 0.50)
+
     def test_paid_calls_are_capped_and_sdk_errors_keep_reservations(self):
         with tempfile.TemporaryDirectory() as directory:
             ledger = BudgetLedger(Path(directory) / "budget.json", 0.50)
@@ -262,6 +313,42 @@ class BudgetTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 client.responses.create(model="other-model", input="test")
             self.assertEqual(create.call_count, 1)
+
+
+class OfflineAuditTests(unittest.TestCase):
+    def test_whitespace_regrading_and_cost_reconciliation_use_no_paid_calls(self):
+        case = validate_dataset()[0]
+        source = (PROJECT_ROOT / "frontend/demo-knowledge" / case.expected_files[0]).read_text()
+        quote = " ".join(case.source_quotes[0]["text"].split())
+        response = ChatResponse(answer=case.reference_answer,
+                                citations=[Citation(filename=case.expected_files[0], quote=quote)],
+                                evidence=[Evidence(filename=case.expected_files[0], text=source)],
+                                usage={"input_tokens": 100, "output_tokens": 10})
+        row = asdict(score_case(case, response))
+        row.update(passed=False, failure_categories=["invalid_quote"], quote_validity=0)
+        metadata = {"case_ids": [case.id], "corpus_sha256": corpus_hash(),
+                    "dataset_sha256": hashlib.sha256(DATASET.read_bytes()).hexdigest()}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for variant in VARIANTS:
+                report = {"generated_at": "2026-10-21T00:00:00Z", "scoring_version": 2,
+                          "fingerprint": "original-experiment", "metadata": metadata,
+                          "summary": summarise([score_case(case, response)]), "results": [row]}
+                write_report(report, directory / variant)
+            total = 3 * .000015 + .0025
+            (directory / "budget.json").write_text(json.dumps({
+                "known_cost_usd": total, "accounted_usd": total, "calls": 3,
+                "uncertain_calls": 0}))
+            result = audit_suite(directory)
+            self.assertEqual(result["api_calls"], 0)
+            self.assertEqual(result["paired_cases"], 1)
+            updated = json.loads((directory / "file_search/latest.json").read_text())
+            self.assertEqual(updated["scoring_version"], SCORING_VERSION)
+            self.assertAlmostEqual(updated["results"][0]["estimated_cost_usd"], .002515)
+            self.assertEqual(updated["results"][0]["quote_validity"], 1)
+            self.assertTrue((directory / "hybrid/raw-v2.json").exists())
+            with self.assertRaises(ValueError):
+                audit_suite(directory)
 
 
 if __name__ == "__main__":

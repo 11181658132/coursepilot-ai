@@ -197,13 +197,34 @@ python -m app.cli eval --engine hybrid --no-rerank --output-dir ../evals/reports
 
 The public benchmark now has 50 source-checked **draft**, not human-reviewed, cases:
 30 development and 20 frozen holdout. It compares File Search, hybrid without
-reranking, and hybrid with reranking. Scoring v2 separates retrieved evidence from
+reranking, and hybrid with reranking. Scoring v3 separates retrieved evidence from
 citations, counts missing citations as zero precision, reports coverage and P50/P95,
 and supports hash-bound human correctness/faithfulness labels. No semantic accuracy
 claim is made from keywords or quote presence. The historical 13-course-case snapshot
-above used legacy metrics; do not compare its scores directly with v2 or the fictional
+above used legacy metrics; do not compare its scores directly with v3 or the fictional
 corpus. See [the evaluation protocol](evals/README.md) for free validation, bounded
 paid runs, failure taxonomy, paired comparisons and the manual-review rubric.
+
+### Fictional-corpus development comparison · 2026-10-21
+
+30 paired development cases per engine; 90 completed responses, zero blocked.
+Labels are source-checked drafts, **not human-reviewed gold**. Proxy pass is not
+answer accuracy. The 20 holdout cases were not run or used for tuning.
+
+| Engine | Proxy pass | Retrieval hit | Citation precision | Keyword recall | P50 / P95 ms | Estimated USD |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| File Search | 80.00% | 100% | 88.33% | 97.22% | 4,691 / 6,894 | 0.085911 |
+| Hybrid, no reranker | 66.67% | 100% | 70.00% | 70.00% | 1,966 / 3,337 | 0.005255 |
+| Hybrid + reranker | 63.33% | 100% | 68.33% | 69.44% | 4,366 / 16,268 | 0.007480 |
+
+Total estimated additional API cost: **$0.09864598**, reconciled with the independent
+budget ledger; no uncertain charges. Scores use v3 offline regrading of preserved
+responses to fix a whitespace-quote grader bug and hosted report-rate omission,
+without new generation calls. Correctness and faithfulness remain unmeasured until
+human review (0/90 reviewed). No reranking improvement is claimed: in this small
+run it increased latency/cost without improving the proxy pass rate. With four
+results over five documents, retrieval hit is inherently easy; these results do not
+establish private-course quality, large-corpus retrieval, or production latency.
 
 ### Hosted File Search indexing
 

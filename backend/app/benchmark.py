@@ -17,6 +17,7 @@ from openai import NotFoundError, OpenAI
 from app.config import PROJECT_ROOT, get_settings
 from app.eval_budget import BudgetClient, BudgetExceeded, BudgetLedger
 from app.evaluation import (
+    SCORING_VERSION,
     EvalResult,
     apply_reviews,
     load_cases,
@@ -113,7 +114,9 @@ class DemoHostedBase(OpenAIKnowledgeBase):
         save_state(state_path, {"stores": {f"DEMO101:{kind}": {"id": store_id}
                                            for kind in ("lecture", "tutorial", "other")}})
         super().__init__(api_key=config.openai_api_key, model=config.openai_model,
-                         state_path=state_path, max_results=4)
+                         state_path=state_path, max_results=4,
+                         input_cost_per_million=0.10, output_cost_per_million=0.50,
+                         file_search_cost_per_thousand=2.50)
         self.budget_client = client
 
     def chat(self, course, material_type, question):
@@ -130,7 +133,10 @@ class DemoHostedBase(OpenAIKnowledgeBase):
             return self.budget_client.responses.create(**kwargs)
 
         self.client = SimpleNamespace(responses=SimpleNamespace(create=scoped))
-        return super().chat(course, material_type, question)
+        result = super().chat(course, material_type, question)
+        # tool_choice=required and max_tool_calls=1 force exactly one hosted search.
+        result.usage["file_search_calls"] = 1
+        return result
 
 
 def prepare_hybrid(config, client, directory):
@@ -199,8 +205,9 @@ def compare(directory: Path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--validate", action="store_true")
-    parser.add_argument("--live", action="store_true", help="Explicit paid opt-in")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--validate", action="store_true")
+    mode.add_argument("--live", action="store_true", help="Explicit paid opt-in")
     parser.add_argument("--split", choices=("dev", "holdout"), default="dev")
     parser.add_argument("--allow-holdout", action="store_true")
     parser.add_argument("--limit", type=int)
@@ -258,7 +265,7 @@ def run_live(args, cases):
                     "implementation_sha256": hashlib.sha256(b"".join(
                         path.read_bytes() for path in sorted((PROJECT_ROOT / "backend/app").rglob(
                             "*.py")))).hexdigest(),
-                    "corpus_sha256": corpus_hash(), "scoring_version": 2,
+                    "corpus_sha256": corpus_hash(), "scoring_version": SCORING_VERSION,
                     "model": config.openai_model, "max_results": 4,
                     "embedding_model": config.rag_embedding_model,
                     "candidate_count": config.rag_candidate_count,
@@ -289,7 +296,8 @@ def run_live(args, cases):
                     if result["error"]:
                         stopped = True
                 report = {"generated_at": datetime.now(timezone.utc).isoformat(),
-                          "scoring_version": 2, "fingerprint": fingerprint, "metadata": metadata,
+                          "scoring_version": SCORING_VERSION,
+                          "fingerprint": fingerprint, "metadata": metadata,
                           "variant": variant,
                           "summary": summarise(EvalResult(**row) for row in results),
                           "results": results, "budget": dict(ledger.data)}

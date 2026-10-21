@@ -24,6 +24,18 @@ class BudgetLedger:
         self.path, self.limit = path, limit
         self.data = json.loads(path.read_text()) if path.exists() else {
             "known_cost_usd": 0.0, "accounted_usd": 0.0, "calls": 0, "uncertain_calls": 0}
+        self.validate()
+
+    def validate(self):
+        for field in ("known_cost_usd", "accounted_usd"):
+            value = self.data[field]
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError("Corrupt budget ledger; paid calls are disabled")
+        if self.data["known_cost_usd"] > self.data["accounted_usd"] + 1e-8:
+            raise ValueError("Inconsistent budget ledger")
+        for field in ("calls", "uncertain_calls"):
+            if type(self.data[field]) is not int or self.data[field] < 0:
+                raise ValueError("Invalid budget counters")
 
     @contextmanager
     def lock(self):
@@ -34,6 +46,7 @@ class BudgetLedger:
             # Re-read after locking, so a resumed process cannot use stale balances.
             if self.path.exists():
                 self.data = json.loads(self.path.read_text())
+            self.validate()
             yield self
 
     def reserve(self, upper: float):

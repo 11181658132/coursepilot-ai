@@ -68,7 +68,7 @@ not describe development scores as independent test performance.
 
 ## Metrics and failure analysis
 
-Scoring version 2 intentionally changes legacy metric semantics:
+Scoring version 3 intentionally changes legacy metric semantics:
 
 - Retrieval hit: an expected document appears in **retrieved evidence**, not merely
   in generated citations. Recall is expected-document coverage; MRR uses the first
@@ -78,7 +78,8 @@ Scoring version 2 intentionally changes legacy metric semantics:
   Source sets are draft and may miss legitimate alternatives until reviewed.
 - Keyword recall: substring matches against bilingual alternative groups. This is
   a concept-coverage proxy, not semantic accuracy.
-- Quote validity: supplied quote occurs verbatim in same-file returned evidence.
+- Quote validity: supplied quote occurs in same-file returned evidence after
+  whitespace normalization only, matching the product's PDF line-wrap handling.
   No quoted citations means unavailable, not 100%. Presence is not entailment.
 - Refusal: a bilingual phrase heuristic plus forbidden-canary checks. This is not
   a proof against prompt injection, and can produce false positives/negatives.
@@ -133,5 +134,24 @@ Keep raw responses, review notes and reports local. Publish only deliberately
 sanitized aggregate results with sample count, split, scoring version, label status,
 coverage, limitations and cost. Never replace the original course benchmark's
 historical results with fictional-corpus results without clearly distinguishing them.
+
+## Audit of the first development run
+
+The first run exposed two grader/accounting bugs: literal newline differences
+incorrectly invalidated real quotations, and the hosted adapter inherited zero
+reporting rates. An independent pre-call budget ledger correctly recorded costs.
+Both bugs were fixed and covered by regression tests. `app.eval_audit` regraded the
+saved answers with scoring v3 and reconciled token + forced single-search costs
+against that ledger, **without rerunning generation or making additional API calls**.
+Original v2 reports remain in local `raw-v2.json` snapshots. New reports retain the
+source experiment fingerprint plus a grading-code digest. This migration refuses
+changed datasets/corpora, incomplete suites, uncertain costs, or repeated overwrites.
+
+The recorded result is 30 completed development cases per variant, no blocked cases,
+and zero human-reviewed grades. Reranking did not improve this development proxy
+score. The eight no-citation refusals in each hybrid variant need diagnosis; the
+cached response alone cannot distinguish a deliberate refusal from a validation
+fallback. Some extra-citation penalties may also reflect incomplete draft source
+sets. Do not equate these tags with independently verified model errors.
 
 Methodology reference: [OpenAI evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).

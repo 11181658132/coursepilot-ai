@@ -13,6 +13,8 @@ from app.models import ChatResponse
 from app.services.openai_kb import OpenAIKnowledgeBase
 from app.services.state import save_state
 
+SCORING_VERSION = 3
+
 
 @dataclass
 class EvalCase:
@@ -133,9 +135,18 @@ def score_case(case: EvalCase, response: ChatResponse) -> EvalResult:
         len(expected & set(cited_files)) / len(cited_files) if cited_files else 0.0
     ) if expected else None
     quoted = [item for item in response.citations if item.quote]
+
+    def quote_matches(item, evidence):
+        quote = " ".join(item.quote.split())
+        same_chunk = not item.chunk_id or item.chunk_id == evidence.chunk_id
+        same_source = not item.source_id or item.source_id == evidence.source_id
+        return (len(quote) >= 8 and same_chunk and same_source
+                and item.filename == evidence.filename
+                and quote in " ".join(evidence.text.split()))
+
     quote_validity = (
-        sum(any(item.quote in evidence.text and item.filename == evidence.filename
-                for evidence in response.evidence) for item in quoted) / len(quoted)
+        sum(any(quote_matches(item, evidence) for evidence in response.evidence)
+            for item in quoted) / len(quoted)
         if quoted else None
     )
 
@@ -290,7 +301,7 @@ def run_evaluation(
             )
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "scoring_version": 2,
+        "scoring_version": SCORING_VERSION,
         "summary": summarise(results),
         "results": [asdict(result) for result in results],
     }
@@ -302,7 +313,7 @@ def resume_evaluation(
     previous_report: Dict[str, Any],
 ) -> Dict[str, Any]:
     cases_list = list(cases)
-    if previous_report.get("scoring_version") != 2:
+    if previous_report.get("scoring_version") != SCORING_VERSION:
         raise ValueError("Cannot resume a report scored with a different metric version")
     previous = {item["id"]: item for item in previous_report.get("results", [])}
     if any(case.id in previous and previous[case.id]["question"] != case.question
@@ -320,7 +331,7 @@ def resume_evaluation(
     results = [EvalResult(**item) for item in merged]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "scoring_version": 2,
+        "scoring_version": SCORING_VERSION,
         "summary": summarise(results),
         "results": [asdict(result) for result in results],
     }
