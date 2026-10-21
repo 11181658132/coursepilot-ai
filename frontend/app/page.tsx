@@ -485,17 +485,29 @@ export default function Home() {
   }
 
   return (
-    <main>
-      <header className="hero">
-        <div className="eyebrow">GROUNDED COURSE INTELLIGENCE</div>
-        <h1>CoursePilot <span>AI</span></h1>
-        <p>从 Lecture 和 Tutorial 中检索证据，再回答你的问题。</p>
+    <div className="appShell">
+      <a className="skipLink" href="#workspace">跳到工作区</a>
+      <aside className="appRail">
+        <div className="brand"><span className="brandMark" aria-hidden="true">✦</span><span>CoursePilot<span className="brandAI">AI</span></span></div>
+        <div className="railLabel">学习工作台 <span>WORKSPACE</span></div>
         <nav className="viewTabs" aria-label="页面切换">
-          <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>课程问答</button>
-          <button className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>资料管理</button>
-          <button className={view === "agent" ? "active" : ""} onClick={() => setView("agent")}>复习计划 Agent</button>
+          <button aria-current={view === "chat" ? "page" : undefined} className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><span aria-hidden="true">◈</span>课程问答<span className="navHint">RAG</span></button>
+          <button aria-current={view === "documents" ? "page" : undefined} className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}><span aria-hidden="true">▤</span>资料管理<span className="navHint">KB</span></button>
+          <button aria-current={view === "agent" ? "page" : undefined} className={view === "agent" ? "active" : ""} onClick={() => setView("agent")}><span aria-hidden="true">✧</span>复习计划<span className="navHint">AGENT</span></button>
         </nav>
-        {view !== "agent" && <label className="enginePicker">检索方式
+        <div className="railNote"><span className="railNoteIcon" aria-hidden="true">↗</span><strong>不止找到答案</strong><p>从理解知识，到制定计划。<br />让每一次学习都有据可循。</p><span className="railNoteTag">RETRIEVE → LEARN → ACT</span></div>
+        <div className="railFooter"><span className="avatar">CP</span><div><strong>{DEMO_MODE ? "公开演示空间" : "我的学习空间"}</strong><small>{DEMO_MODE ? "Fictional data · DEMO101" : "Personal knowledge workspace"}</small></div><span className="onlineDot" title="工作台" /></div>
+      </aside>
+    <main id="workspace" className="appMain">
+      <div className="topbar"><div>我的工作台 <span>/</span> <strong>{view === "chat" ? "课程问答" : view === "documents" ? "资料管理" : "复习计划 Agent"}</strong></div><span className="modePill"><span className="onlineDot" />{DEMO_MODE ? "公开体验版" : "本地工作区"}</span></div>
+      <header className="hero">
+        <div className="heroCopy"><div className="eyebrow">YOUR KNOWLEDGE, CONNECTED</div>
+        <h1>{view === "chat" ? <>把知识，<span>真正学懂。</span></> : view === "documents" ? <>让资料，<span>成为知识。</span></> : <>让目标，<span>变成行动。</span></>}</h1>
+        <p>{view === "chat" ? "从课程资料中寻找证据，把问题变成清晰的理解。" : view === "documents" ? "管理学习资料，为每一次检索打好基础。" : "基于课程证据，安排每天的学习与自测。"}</p></div>
+        <div className="heroArt" aria-hidden="true"><div className="orbit orbitOne" /><div className="orbit orbitTwo" /><div className="artTile artBook">▤</div><div className="artCore">✦</div><div className="artTile artCheck">✓</div><span className="artSpark">✧</span></div>
+      </header>
+      <div className="workspaceToolbar">
+        {view !== "agent" && <label className="enginePicker">检索引擎
           <select value={engine} disabled={loading || documentLoading} onChange={(event) => {
             setEngine(event.target.value as "file_search" | "hybrid");
             newConversation(); setSyncPreview(null); setNotice(""); setSourcePreview(null);
@@ -503,17 +515,17 @@ export default function Home() {
             <option value="file_search">File Search · 基线</option>
             <option value="hybrid">自建 RAG · 混合检索与重排序</option>
           </select>
-          {engine === "hybrid" && <span>{DEMO_MODE ? "与本地共用 Python 核心：BM25 + 向量检索、重排序，引用可展开原文。" : "首次使用请在资料管理中建立混合索引，问答引用可展开原文。"}</span>}
+          {engine === "hybrid" && <span className="engineHint">BM25 + 向量检索 · 来源可追溯</span>}
         </label>}
-        {DEMO_MODE && <div className="demoBanner"><strong>真实 AI 演示</strong><span>使用虚构资料实时检索并调用 OpenAI；不包含任何真实课程文件。每位访客每天可提问 5 次。</span></div>}
-      </header>
+        {DEMO_MODE && <div className="demoBanner"><span aria-hidden="true">◉</span><strong>真实 AI · 虚构资料</strong><span>{view === "agent" ? "仅使用 DEMO101 示例资料，不包含真实课程。" : "不包含真实课程文件 · 每位访客每天可提问 5 次"}</span></div>}
+      </div>
 
       {view === "agent" ? <StudyAgent apiUrl={API_URL} demoMode={DEMO_MODE} courses={courses} onSource={inspectSource} initialCourse={course} initialGoal={agentGoal} /> : view === "chat" ? <section className="workspace">
         <aside className="sidebar">
           <button className="newChat" onClick={newConversation}>＋ 新对话</button>
           <div className="sectionLabel historyLabel">聊天记录</div>
           <div className="historyList">
-            {conversations.length === 0 && <p className="emptyHistory">还没有历史对话</p>}
+            {conversations.length === 0 && <p className="emptyHistory">新的灵感，从一个问题开始。</p>}
             {conversations.map((item) => (
               <button
                 className={`historyItem ${activeConversationId === item.id ? "active" : ""}`}
@@ -585,19 +597,20 @@ export default function Home() {
           ))}
 
           <form onSubmit={ask} className="askCard">
+            {!activeConversationId && <div className="askIntro"><span className="assistantMark" aria-hidden="true">✦</span><div className="sectionLabel">ASK YOUR KNOWLEDGE</div><p>不用翻遍所有课件，<br /><strong>从你想知道的开始。</strong></p></div>}
             <label htmlFor="question">{activeConversationId ? "继续追问" : "你想理解什么？"}</label>
             {DEMO_MODE && <div className="suggestions" aria-label="示例问题">
-              {DEMO_SUGGESTIONS.map((suggestion) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}
+              {DEMO_SUGGESTIONS.map((suggestion, index) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}><span className="suggestionNumber">0{index + 1}</span>{suggestion}<span className="suggestionArrow" aria-hidden="true">↗</span></button>)}
             </div>}
             <textarea id="question" maxLength={600} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={DEMO_MODE ? "可以询问 RAG、检索评测、安全与成本控制。" : "例如：解释 Week 3 中的核心模型，并比较它与 Week 2 方法的区别。"} rows={5} />
-            <div className="formFooter"><span>回答会附带来源文件</span><button disabled={loading || !course || !question.trim()}>{loading ? "正在检索…" : "开始提问"}</button></div>
+            <div className="formFooter"><span><span aria-hidden="true">◇</span> 基于课程证据回答 · 附带来源引用</span><button disabled={loading || !course || !question.trim()}>{loading ? "正在检索…" : "开始提问 ↗"}</button></div>
           </form>
           {error && <div className="error">{error}</div>}
         </div>
       </section> : <section className="documentWorkspace">
         <div className="managerHeader">
           <div><div className="sectionLabel">KNOWLEDGE BASE</div><h2>课程资料管理</h2>
-            <p>上传只会保存到本地知识库；检查后由你决定是否发送到 OpenAI 建立索引。</p>
+            <p>{DEMO_MODE ? "浏览 5 份虚构示例资料。公开空间为只读，不会上传或删除文件。" : "上传只会保存到本地知识库；检查后由你决定是否发送到 OpenAI 建立索引。"}</p>
           </div>
           <button className="secondaryButton" onClick={previewIndex} disabled={documentLoading}>检查索引更新</button>
         </div>
@@ -668,6 +681,8 @@ export default function Home() {
           <a href={`${DEMO_MODE ? "/api/demo" : `${API_URL}/api`}/sources/${sourcePreview.chunk_id}/file${sourcePreview.locator_type === "page" ? `#page=${sourcePreview.page}` : ""}`} target="_blank" rel="noreferrer">{sourcePreview.locator_type === "page" ? "打开 PDF 对应页" : "下载源文件"}</a>
         </section>
       </div>}
+      <footer className="workspaceFooter"><span>CoursePilot AI</span><span>有据可循的回答，有迹可循的学习。</span><span>RAG + AGENT</span></footer>
     </main>
+    </div>
   );
 }
