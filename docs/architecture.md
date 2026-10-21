@@ -35,11 +35,20 @@ switching engines; backend/CLI configuration can still select the hosted baselin
   atomically replaces a document only after all new embeddings are available. Changed
   and deleted files are excluded from search and source inspection by hash checks.
 - `retrieval.py` computes BM25 and exact cosine rankings **after** course/type
-  filtering. RRF merges both rankings. `hybrid_kb.py` optionally sends at most the
-  configured candidate count to an LLM relevance scorer, validating returned IDs.
+  filtering. Whitespace-equivalent passages within one document are deduplicated
+  before BM25/RRF so repetitions do not consume candidate slots; different files
+  and different overlapping passages remain distinct. `hybrid_kb.py` optionally
+  sends at most the configured candidate count to an LLM relevance scorer,
+  validating exact ID coverage and integer scores in [0, 3]. Invalid reranker
+  output fails closed without an extra generation call or permissive fallback.
 - Generation receives only the final passages and bounded same-course conversation
   history. The server checks that inline source IDs match returned citations and
   every quote occurs in the selected original chunk. Invalid citations fail closed.
+  A valid inline marker cannot conceal additional malformed references. Source IDs
+  and file hashes are rechecked after reranking and after generation; if a selected
+  source becomes unavailable during generation, the whole draft and evidence are
+  withheld with a `source_changed` diagnostic. These are boundary checks, not an
+  atomic filesystem snapshot or a guarantee against changes after response delivery.
 - `GET /api/sources/{chunk_id}` returns current chunk text; the `/file` suffix serves
   the validated source file. Files are resolved inside the configured knowledge root.
   Only PDFs render inline, with the page fragment supplied by the client.

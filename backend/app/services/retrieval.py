@@ -48,6 +48,16 @@ def cosine(left: List[float], right: List[float]) -> float:
 
 
 def rank_candidates(query: str, rows: List[dict], vector: List[float], limit: int) -> List[dict]:
+    # Repeated extraction within one document should not consume candidate slots
+    # or distort BM25 document frequencies. Keep different files independently
+    # citable and keep genuinely different/overlapping passages intact.
+    unique, seen = [], set()
+    for row in sorted(rows, key=lambda item: item["chunk_id"]):
+        identity = (row.get("path", row["chunk_id"]), " ".join(row["text"].split()))
+        if identity not in seen:
+            seen.add(identity)
+            unique.append(row)
+    rows = unique
     lexical = bm25(query, [row["text"] for row in rows])
     dense = [cosine(vector, row["embedding"]) for row in rows]
     rankings = [

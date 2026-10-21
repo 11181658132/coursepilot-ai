@@ -58,6 +58,12 @@ class CitationDiagnosticTests(unittest.TestCase):
         self.draft["citations"][0]["quote"] = "Invented unsupported quotation"
         self.assertEqual(self.reason(), "quote_not_found")
 
+    def test_valid_marker_cannot_hide_an_additional_malformed_reference(self):
+        for marker in ("[S2,S99]", "[s1]", "[ S1 ]", "[S 1]", "[S1"):
+            with self.subTest(marker=marker):
+                self.draft["answer"] = "Supported claim. [S1] Other claim. " + marker
+                self.assertEqual(self.reason(), "inline_citation_mismatch")
+
     def test_unknown_source_is_never_repaired_by_guessing_an_existing_source(self):
         self.draft["citations"][0]["source_id"] = "S99"
         self.assertEqual(self.reason(), "unknown_source_id")
@@ -141,7 +147,8 @@ class StructuredOutputTests(unittest.TestCase):
         base = self.base()
         row = {"filename": "source.md", "chunk_id": "a", "text":
                "This exact original sentence is supported.", "score": 1}
-        with patch.object(base, "retrieve", return_value=[row]):
+        with patch.object(base, "retrieve", return_value=[row]), patch.object(
+                base, "_current_rows", return_value=[row]):
             response = base.chat("DEMO101", "all", "question")
         self.assertEqual(response.diagnostics.reason, "quote_not_found")
         self.assertEqual(response.citations, [])
@@ -157,7 +164,8 @@ class StructuredOutputTests(unittest.TestCase):
         base = self.base()
         row = {"filename": "source.md", "chunk_id": "a", "text":
                "This exact original sentence is supported.", "score": 1}
-        with patch.object(base, "retrieve", return_value=[row]):
+        with patch.object(base, "retrieve", return_value=[row]), patch.object(
+                base, "_current_rows", return_value=[row]):
             response = base.chat("DEMO101", "all", "question")
         self.assertEqual(response.answer, "Verified answer. [S1]")
         self.assertTrue(response.diagnostics.citation_markers_repaired)

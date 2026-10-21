@@ -161,6 +161,14 @@ to that API and selected passages to the configured generation model. The local
 database is excluded from Git. Do not enable this on a shared/public backend without
 authentication and document-level access controls.
 
+The shared local/public hybrid core now deduplicates identical normalized passages
+within a document before ranking, strictly validates reranker scores and ID coverage,
+rejects malformed references even alongside valid citations, and rechecks source
+validity after remote reranking and generation. An invalidated draft is withheld,
+without automatically repeating paid calls. See [the RAG hardening notes](docs/RAG_HARDENING.md)
+for the offline regression scope and limits. These changes have **not** been live
+re-evaluated; historical answer-quality metrics below are unchanged.
+
 ```bash
 cd backend
 python -m app.cli sync --engine hybrid --dry-run

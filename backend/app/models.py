@@ -117,7 +117,7 @@ class AnswerDiagnostics(BaseModel):
     reason: Literal["answered", "no_relevant_evidence", "generation_no_citations",
                     "invalid_model_output", "unknown_source_id", "quote_not_found",
                     "quote_too_short", "inline_citation_mismatch", "provider_refusal",
-                    "response_incomplete"]
+                    "response_incomplete", "source_changed"]
     stage: Literal["retrieval", "rerank", "generation", "validation"]
     evidence_count: int = 0
     citation_count: int = 0

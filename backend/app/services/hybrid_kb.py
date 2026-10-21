@@ -62,6 +62,11 @@ def validate_answer(draft: dict, evidence: List[Evidence]):
                 quote=item["quote"]))
             seen.add(source.source_id)
     inline = set(re.findall(r"\[(S\d+)\]", draft["answer"]))
+    # A valid marker elsewhere must not hide additional malformed references,
+    # e.g. '[S1] ... [S2,S99]' or a dangling '[s1'.
+    markers = re.findall(r"\[\s*[sS]\s*\d[^\]\n]*(?:\]|$)", draft["answer"])
+    if any(not re.fullmatch(r"\[S\d+\]", marker) for marker in markers):
+        return rejected("inline_citation_mismatch")
     if not seen:
         return rejected("unknown_source_id" if inline else "generation_no_citations")
     answer = draft["answer"]
@@ -231,6 +236,24 @@ class HybridKnowledgeBase:
         source.pop("sha256")
         return source
 
+    def _current_rows(self, rows: List[dict]) -> List[dict]:
+        """Check index membership per chunk and hash each file once per boundary.
+
+        Do not cache across requests or remote calls: a cached hash would conceal
+        source replacement while a model call is in progress.
+        """
+        current, retained = {}, []
+        for row in rows:
+            source = self.store.source(row["chunk_id"], self.signature)
+            if source is None:
+                continue
+            key = (source["path"], source["sha256"])
+            if key not in current:
+                current[key] = self._is_current(source)
+            if current[key]:
+                retained.append(row)
+        return retained
+
     def _json_response(self, name: str, schema: dict, instructions: str, payload: dict) -> dict:
         response = self._client().responses.create(
             model=self.config.openai_model, instructions=instructions,
@@ -273,10 +296,20 @@ class HybridKnowledgeBase:
             {"question": question, "passages": [
                 {"chunk_id": row["chunk_id"], "text": row["text"]} for row in rows]},
         )
+        # Structured output is still untrusted at the application boundary.
+        # Reject missing, duplicate, invented or non-integer relevance scores;
+        # never silently fall back to unfiltered evidence after a bad rerank.
+        if set(result) != {"scores"} or not isinstance(result["scores"], list):
+            raise ModelOutputError("invalid_model_output")
         scores = result["scores"]
+        if any(not isinstance(item, dict) or set(item) != {"chunk_id", "score"}
+               or not isinstance(item["chunk_id"], str)
+               or type(item["score"]) is not int or not 0 <= item["score"] <= 3
+               for item in scores):
+            raise ModelOutputError("invalid_model_output")
         ids = [item["chunk_id"] for item in scores]
         if len(ids) != len(set(ids)) or set(ids) != {row["chunk_id"] for row in rows}:
-            raise ValueError("Reranker returned invalid passage IDs")
+            raise ModelOutputError("invalid_model_output")
         by_id = {item["chunk_id"]: item["score"] for item in scores}
         return sorted([{**row, "rerank_score": by_id[row["chunk_id"]]} for row in rows],
                       key=lambda row: (-row["rerank_score"], -row["score"], row["chunk_id"]))
@@ -299,7 +332,11 @@ class HybridKnowledgeBase:
         if candidates and (self.config.rag_rerank if rerank is None else rerank):
             candidates = self._rerank(question, candidates)
             candidates = [row for row in candidates if row["rerank_score"] >= 2]
-        return candidates[:self.config.max_search_results]
+        # Files or index entries may change while the remote reranker is running.
+        current_candidates = self._current_rows(candidates)
+        if candidates and not current_candidates:
+            raise ModelOutputError("source_changed")
+        return current_candidates[:self.config.max_search_results]
 
     def _embedding_cost(self, tokens: int) -> float:
         return round(tokens * self.config.rag_embedding_cost_per_million / 1_000_000, 8)
@@ -321,7 +358,9 @@ class HybridKnowledgeBase:
             rows = self.retrieve(course, material_type, retrieval_question)
         except ModelOutputError as exc:
             rows = []
-            diagnostics = AnswerDiagnostics(reason=exc.reason, stage="rerank")
+            diagnostics = AnswerDiagnostics(reason=exc.reason,
+                                            stage="retrieval" if exc.reason == "source_changed"
+                                            else "rerank")
         evidence = [Evidence(**{key: value for key, value in row.items()
                                if key not in {"embedding", "sha256"}}, source_id=f"S{i}")
                     for i, row in enumerate(rows, 1)]
@@ -353,8 +392,15 @@ class HybridKnowledgeBase:
             except ModelOutputError as exc:
                 diagnostics = AnswerDiagnostics(reason=exc.reason, stage="generation",
                                                 evidence_count=len(evidence))
+        if rows and len(self._current_rows(rows)) != len(rows):
+            # No additional model call: discard the draft and stale passages rather
+            # than publishing evidence invalidated during answer generation.
+            citations, evidence = [], []
+            diagnostics = AnswerDiagnostics(reason="source_changed", stage="validation")
+        if diagnostics.reason == "source_changed":
+            answer = "资料在检索或回答生成期间发生变化，本次结果未发布。请完成索引更新后重新提问。"
         if diagnostics.reason not in {"answered", "no_relevant_evidence",
-                                      "generation_no_citations"}:
+                                      "generation_no_citations", "source_changed"}:
             answer = "已找到相关资料，但本次回答的引用校验或生成未完成，请稍后重试。"
         usage = {key: self.model_usage[key] - usage_start[key] for key in usage_start}
         usage["embedding_tokens"] = self.embedding_tokens - embedding_start

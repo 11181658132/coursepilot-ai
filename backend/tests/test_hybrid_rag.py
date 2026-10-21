@@ -185,6 +185,90 @@ class HybridRagTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.base.retrieve("A", "all", "database")
 
+    def test_malformed_reranker_fails_closed_with_a_safe_diagnostic(self):
+        self.base.sync(self.config.knowledge_base_dir)
+        chunk_id = self.base.retrieve("A", "all", "database", rerank=False)[0]["chunk_id"]
+        invalid = [{}, {"scores": None}, {"scores": [None]}, {"scores": []},
+                   {"scores": [{"chunk_id": "invented", "score": 3}]},
+                   {"scores": [{"chunk_id": chunk_id, "score": 3}] * 2}]
+        invalid += [{"scores": [{"chunk_id": chunk_id, "score": value}]}
+                    for value in (True, -1, 4, 2.5, "3", None)]
+        for payload in invalid:
+            with self.subTest(payload=payload), patch.object(
+                    self.base, "_json_response", return_value=payload) as respond:
+                response = self.base.chat("A", "all", "database")
+                self.assertEqual(response.diagnostics.reason, "invalid_model_output")
+                self.assertEqual(response.diagnostics.stage, "rerank")
+                self.assertEqual(response.evidence, [])
+                self.assertEqual(response.citations, [])
+                self.assertIn("引用校验或生成未完成", response.answer)
+                self.assertEqual(respond.call_count, 1)
+
+    def test_source_changed_during_rerank_is_not_sent_to_answer_generator(self):
+        self.base.sync(self.config.knowledge_base_dir)
+        original = self.client.responses.create
+
+        def change_source(**kwargs):
+            result = original(**kwargs)
+            self.path.write_text("Database content replaced during reranking.")
+            return result
+
+        self.client.responses.create = change_source
+        response = self.base.chat("A", "all", "database")
+        self.assertEqual(response.diagnostics.reason, "source_changed")
+        self.assertIn("发生变化", response.answer)
+        self.assertEqual(response.evidence, [])
+        self.assertEqual(response.citations, [])
+        self.assertEqual(self.client.model_calls, 1)
+
+    def test_index_deleted_during_generation_discards_draft_and_stale_evidence(self):
+        self.base.sync(self.config.knowledge_base_dir)
+        original = self.client.responses.create
+
+        def delete_index(**kwargs):
+            result = original(**kwargs)
+            if kwargs["text"]["format"]["name"] == "grounded_answer":
+                self.base.delete_document("A/lecture/Week 3.md")
+            return result
+
+        self.client.responses.create = delete_index
+        response = self.base.chat("A", "all", "database")
+        self.assertEqual(response.diagnostics.reason, "source_changed")
+        self.assertEqual(response.evidence, [])
+        self.assertEqual(response.citations, [])
+        self.assertNotIn("preserve consistency", response.answer)
+        self.assertGreater(response.estimated_cost_usd, 0)
+        self.assertEqual(self.client.model_calls, 2)
+
+    def test_file_changed_during_generation_discards_draft_without_retry(self):
+        self.base.sync(self.config.knowledge_base_dir)
+        original = self.client.responses.create
+
+        def change_source(**kwargs):
+            result = original(**kwargs)
+            if kwargs["text"]["format"]["name"] == "grounded_answer":
+                self.path.write_text("New source version; old evidence no longer applies.")
+            return result
+
+        self.client.responses.create = change_source
+        response = self.base.chat("A", "all", "database")
+        self.assertEqual(response.diagnostics.reason, "source_changed")
+        self.assertEqual(response.evidence, [])
+        self.assertEqual(self.client.model_calls, 2)
+        self.assertIn("source_changed", self.config.telemetry_path.read_text())
+
+    def test_freshness_boundary_hashes_each_file_once_not_once_per_chunk(self):
+        self.path.write_text("Database evidence. " * 160)
+        self.base.sync(self.config.knowledge_base_dir)
+        rows = self.base.store.rows(self.base.signature, "A", "all")
+        self.assertGreater(len(rows), 1)
+        with patch.object(self.base, "_is_current", wraps=self.base._is_current) as check:
+            self.assertEqual(self.base._current_rows(rows), rows)
+            self.assertEqual(check.call_count, 1)
+            self.path.write_text("Changed between boundaries.")
+            self.assertEqual(self.base._current_rows(rows), [])
+            self.assertEqual(check.call_count, 2)
+
     def test_embedding_configuration_change_requires_reindex(self):
         self.base.sync(self.config.knowledge_base_dir)
         config = self.config.model_copy(update={"rag_embedding_model": "another-model"})
@@ -240,6 +324,34 @@ class HybridRagTests(unittest.TestCase):
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_exact_same_document_duplicates_do_not_crowd_out_other_evidence(self):
+        rows = [{"chunk_id": "a", "path": "notes.md", "text": "ACID consistency",
+                 "embedding": [1., 0.]},
+                {"chunk_id": "b", "path": "notes.md", "text": "ACID\n consistency",
+                 "embedding": [1., 0.]},
+                {"chunk_id": "c", "path": "notes.md", "text": "ACID rollback",
+                 "embedding": [1., 0.]}]
+        self.assertEqual({r["chunk_id"] for r in rank_candidates("ACID", rows, [1., 0.], 2)},
+                         {"a", "c"})
+        self.assertEqual(len(rows), 3)  # Never mutate stored rows.
+        reversed_rows = rank_candidates("ACID", rows[::-1], [1., 0.], 2)
+        self.assertEqual([r["chunk_id"] for r in reversed_rows], ["a", "c"])
+
+    def test_identical_text_from_different_documents_remains_independently_citable(self):
+        rows = [{"chunk_id": name, "path": name + ".md", "text": "ACID consistency",
+                 "embedding": [1., 0.]} for name in ("a", "b")]
+        self.assertEqual(len(rank_candidates("ACID", rows, [1., 0.], 2)), 2)
+
+    def test_overlapping_but_different_passages_are_not_deduplicated(self):
+        rows = [{"chunk_id": str(i), "path": "notes.md", "text": text,
+                 "embedding": [1., 0.]} for i, text in enumerate(
+                     ("ACID consistency", "ACID consistency and rollback"))]
+        self.assertEqual(len(rank_candidates("ACID", rows, [1., 0.], 2)), 2)
+
+    def test_no_keyword_or_positive_vector_match_returns_no_evidence(self):
+        rows = [{"chunk_id": "a", "text": "database", "embedding": [-1., 0.]}]
+        self.assertEqual(rank_candidates("unrelated", rows, [1., 0.], 2), [])
+
     def test_bm25_finds_exact_terms_and_chinese_bigrams(self):
         scores = bm25("ACID", ["ACID transactions", "nearest neighbors"])
         self.assertGreater(scores[0], scores[1])
