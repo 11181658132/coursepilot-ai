@@ -400,7 +400,7 @@ GitHub Actions repeats these checks on every push and pull request.
   backed by a provider hard spend limit; durable multi-instance rate limiting is the
   next production step.
 
-## Study-plan Agent (local-first)
+## Study-plan Agent (local and public demo)
 
 Open the **复习计划 Agent** tab in the local app. Select an already hybrid-indexed
 course, enter a learning goal, 1–14 days and 15–180 minutes/day, then generate a
@@ -459,9 +459,19 @@ The separate public-demo Agent gateway now supports signed anonymous visitor
 sessions, scoped PostgreSQL persistence, atomic shared cost reservations and
 confirmation/progress actions over the same canonical Python Agent. It accepts only
 fictional DEMO101 data. It fails closed unless its dedicated database and explicit
-feature flag are configured; this implementation is **not a claim of a completed
-live deployment**. See [public Agent setup and acceptance](docs/PUBLIC_AGENT_DEPLOYMENT.md).
+feature flag are configured. The [public demo](https://coursepilot-ai-ebon.vercel.app/)
+is deployed with a dedicated Neon PostgreSQL database as of 2026-10-21.
+See [public Agent setup and acceptance](docs/PUBLIC_AGENT_DEPLOYMENT.md).
 No private course files are bundled for deployment.
+
+Public live smoke acceptance: one three-day draft, confirmation, progress
+persistence, source expansion and request replay passed. Independent anonymous
+visitors cannot read, confirm or change each other's plans; stale writes,
+cross-origin mutations and unsigned worker requests are rejected. The run used
+4 API calls, estimated **$0.00059144**, zero uncertain charges, under the approved
+$0.05 acceptance cap. This is one smoke test, not a measured model success rate.
+CI passed **151 backend tests**, including 3 real PostgreSQL integration tests,
+and **24 frontend tests**, type checking, lint and production build.
 
 ### Scripted Agent contract evaluation · 2026-10-21
 

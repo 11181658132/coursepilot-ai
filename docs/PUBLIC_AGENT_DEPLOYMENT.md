@@ -1,8 +1,18 @@
 # Public RAG + study Agent deployment
 
-Status: implementation and offline checks are available locally. Database
-provisioning, real PostgreSQL integration checks, deployment and live-browser
-acceptance must be completed before calling the public Agent operational.
+Status (2026-10-21): deployed at https://coursepilot-ai-ebon.vercel.app/ with a
+dedicated Neon PostgreSQL database. CI passed all 151 backend tests (including the
+three real PostgreSQL integration tests), 24 frontend tests, type checking, lint
+and production build. The browser exposes the Agent interface and establishes its
+visitor session; live HTTP acceptance verified the state transitions below.
+
+One fictional three-day run used 4 API calls (3 model turns and one retrieval
+embedding), estimated $0.00059144, with zero uncertain charges. Draft creation,
+confirmation, progress persistence on re-read, source expansion, idempotent replay
+without extra calls, stale-write conflict, foreign-visitor read/write denial,
+cross-origin denial and unsigned-worker denial passed. This is a single smoke
+test, not a model-success-rate, semantic-faithfulness or load benchmark. Raw plans,
+visitor cookies and reports are not committed.
 
 ## Infrastructure boundary
 
