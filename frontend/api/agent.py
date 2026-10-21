@@ -21,6 +21,7 @@ from app.services.study_agent import (  # noqa: E402
     StudyAgent,
     TaskUpdate,
 )
+from app.services.study_feedback import FeedbackAgent, FeedbackRequest  # noqa: E402
 from app.services.study_store import StudyBudgetExceeded, StudyConflict  # noqa: E402
 from rag import demo_base  # noqa: E402
 
@@ -67,7 +68,7 @@ def handle(body, store_factory=PublicStudyStore, base_factory=demo_base):
     elif action == "list":
         if data != {"course": "DEMO101"}:
             raise ValueError("Public course only")
-    elif action not in {"get", "confirm", "task"}:
+    elif action not in {"get", "confirm", "task", "feedback", "confirm_feedback"}:
         raise ValueError("Action not allowed")
     store = store_factory(dsn, body["tenant"], body["quota_key"])
     if action == "list":
@@ -88,6 +89,22 @@ def handle(body, store_factory=PublicStudyStore, base_factory=demo_base):
         update = TaskUpdate.model_validate({k: v for k, v in data.items()
                                            if k not in {"plan_id", "task_id"}})
         return store.set_task(data["plan_id"], data["task_id"], update.done, update.version)
+    if action == "confirm_feedback":
+        if set(data) != {"plan_id", "feedback_id", "confirmed", "version"}:
+            raise ValueError("Invalid feedback confirmation")
+        confirmation = Confirmation.model_validate({k: v for k, v in data.items()
+                                                   if k not in {"plan_id", "feedback_id"}})
+        return store.confirm_feedback(data["plan_id"], data["feedback_id"], confirmation.version)
+    if action == "feedback":
+        if set(data) != {"plan_id", "task_id", "request_id", "answer", "version"}:
+            raise ValueError("Invalid feedback request")
+        request = FeedbackRequest.model_validate_json(json.dumps({
+            k: v for k, v in data.items() if k not in {"plan_id", "task_id"}}))
+        if len(request.answer) > 400:
+            raise ValueError("Public answer size limit")
+        parent = store.get(data["plan_id"])
+        if parent["course"] != "DEMO101" or parent.get("kind") == "feedback":
+            raise KeyError("Plan not found")
     base = base_factory()
     config = base.config.model_copy(update={
         "agent_run_budget_usd": 0.05, "agent_daily_budget_usd": 0.10,
@@ -95,6 +112,8 @@ def handle(body, store_factory=PublicStudyStore, base_factory=demo_base):
         "agent_request_timeout_seconds": 8,
     })
     # New per-run RAG instance; never share mutable usage counters across visitors.
+    if action == "feedback":
+        return FeedbackAgent(config, store).run(data["plan_id"], data["task_id"], request)
     return StudyAgent(config, store).run(request)
 
 

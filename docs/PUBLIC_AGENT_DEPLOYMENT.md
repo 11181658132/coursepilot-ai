@@ -53,7 +53,7 @@ files, local SQLite databases, reports, telemetry or private paths may be deploy
 
 4. Before deploying, run backend tests/lint, Agent contracts, frontend typecheck,
    tests/build and `node frontend/scripts/prepare-rag.mjs --check`. The bundle now
-   contains 16 allowlisted canonical Python modules, including the shared Agent.
+   contains 17 allowlisted canonical Python modules, including the shared Agents.
 5. Run the real PostgreSQL integration tests in CI's disposable Postgres service.
    They are deliberately skipped locally when no explicit loopback test DB is
    configured. For local PostgreSQL testing, use a disposable `coursepilot_test`
@@ -95,7 +95,7 @@ an inter-call 38-second deadline and eight-second SDK timeout. The model cannot
 confirm or update progress. Confirmation and task updates do not invoke the model.
 
 PostgreSQL transaction-level advisory locks serialize **short state/budget
-transactions**, never entire model calls. Defaults are 2 new Agent runs/IP/day,
+transactions**, never entire model calls. Defaults are 2 new plan/feedback runs/IP/day,
 20 globally/day, estimated reservations of $0.05/run, $0.10/day globally and
 $0.50/month globally (UTC). Failed/unknown provider calls keep reservations.
 These are conservative **API list-price estimates**, not a provider billing

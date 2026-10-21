@@ -80,4 +80,20 @@ describe("public Agent gateway", () => {
     expect(await response.text()).not.toContain("SECRET");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it("forwards bounded feedback and explicit confirmation using the existing signed namespace", async () => {
+    const cookie = await session();
+    const planId = `v1${"a".repeat(64)}_${"b".repeat(32)}`;
+    const feedbackId = `v1${"a".repeat(64)}_${"c".repeat(32)}`;
+    const taskId = "d".repeat(32);
+    const answer = { request_id: body.request_id, answer: "My understanding", version: 2 };
+    const path = [planId, "tasks", taskId, "answers"];
+    expect((await POST(mutation(cookie, answer, `${url}/${path.join("/")}`), context(path))).status).toBe(200);
+    const submission = JSON.parse(fetcher.mock.calls.at(-1)![1].body);
+    expect(submission.action).toBe("feedback");
+    expect(submission.data).toEqual({ ...answer, plan_id: planId, task_id: taskId });
+    const confirmPath = [planId, "feedbacks", feedbackId, "confirm"];
+    await POST(mutation(cookie, { confirmed: true, version: 3 }, `${url}/${confirmPath.join("/")}`), context(confirmPath));
+    expect(JSON.parse(fetcher.mock.calls.at(-1)![1].body).action).toBe("confirm_feedback");
+    expect(JSON.parse(fetcher.mock.calls.at(-1)![1].body).tenant).toBe(submission.tenant);
+  });
 });

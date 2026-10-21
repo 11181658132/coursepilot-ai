@@ -77,6 +77,24 @@ class PublicAgentWorkerTests(unittest.TestCase):
             worker.handle(body, self.factory, self.base)
         self.store.confirm.assert_not_called()
 
+    def test_feedback_confirmation_does_not_load_model_or_index(self):
+        body = self.envelope("confirm_feedback", {"plan_id": "plan", "feedback_id": "feedback",
+                                                   "confirmed": True, "version": 3})
+        worker.handle(body, self.factory, self.base)
+        self.store.confirm_feedback.assert_called_once_with("plan", "feedback", 3)
+        self.base.assert_not_called()
+
+    def test_feedback_rejects_large_answer_or_foreign_course_before_model(self):
+        body = self.envelope("feedback", {"plan_id": "plan", "task_id": "task",
+            "request_id": str(uuid.uuid4()), "version": 2, "answer": "x" * 401})
+        with self.assertRaises(ValueError):
+            worker.handle(body, self.factory, self.base)
+        body["data"]["answer"] = "Test answer"
+        self.store.get.return_value = {"course": "PRIVATE"}
+        with self.assertRaises(KeyError):
+            worker.handle(body, self.factory, self.base)
+        self.base.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

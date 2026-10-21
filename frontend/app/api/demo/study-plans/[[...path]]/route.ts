@@ -54,6 +54,10 @@ async function handle(request: Request, context: Context) {
       action = "confirm"; data = { ...await readJson(request), plan_id: path[0] };
     } else if (path.length === 3 && idPattern.test(path[0]) && path[1] === "tasks" && /^[a-f0-9]{32}$/.test(path[2]) && request.method === "PATCH") {
       action = "task"; data = { ...await readJson(request), plan_id: path[0], task_id: path[2] };
+    } else if (path.length === 4 && idPattern.test(path[0]) && path[1] === "tasks" && /^[a-f0-9]{32}$/.test(path[2]) && path[3] === "answers" && request.method === "POST") {
+      action = "feedback"; data = { ...await readJson(request), plan_id: path[0], task_id: path[2] };
+    } else if (path.length === 4 && idPattern.test(path[0]) && path[1] === "feedbacks" && idPattern.test(path[2]) && path[3] === "confirm" && request.method === "POST") {
+      action = "confirm_feedback"; data = { ...await readJson(request), plan_id: path[0], feedback_id: path[2] };
     } else return reply({ detail: "接口不存在。" }, 404);
   } catch { return reply({ detail: "请求格式或大小无效。" }, 400); }
   const tenant = digest(secret, `tenant-v1.${visitor.id}`);

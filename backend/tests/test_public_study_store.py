@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 from app.services.public_study_store import PgConnection, PgRow, PublicStudyStore
 from app.services.study_agent import PlanRequest
+from app.services.study_feedback import FeedbackRequest
 from app.services.study_store import StudyBudgetExceeded, StudyStore
 
 
@@ -102,6 +103,21 @@ class PublicStudyStoreTests(unittest.TestCase):
         self.assertEqual(sql, "SELECT * FROM cp_demo_study_runs WHERE id=%s")
         self.assertEqual(params, ("user-input",))
         self.assertEqual(PgRow(cost=0.1, uncertain=1, calls=2)[0], 0.1)
+
+    def test_feedback_scope_is_checked_for_known_foreign_plan_and_child_ids(self):
+        draft, _ = self.one.start(self.request)
+        task = {"id": uuid.uuid4().hex, "day": 1, "done": False}
+        self.one.finish(draft["id"], "draft", {"tasks": [task], "trace": []})
+        parent = self.one.confirm(draft["id"], 1)
+        request = FeedbackRequest(request_id=uuid.uuid4(), version=parent["version"],
+                                  answer="Fictional test answer")
+        with self.assertRaises(KeyError):
+            self.two.begin_feedback(parent["id"], task["id"], request)
+        child, _ = self.one.begin_feedback(parent["id"], task["id"], request)
+        with self.assertRaises(KeyError):
+            self.two.confirm_feedback(parent["id"], child["id"], child["base_version"])
+        self.assertEqual(self.two.list("DEMO101"), [])
+        self.assertEqual(len(self.one.list("DEMO101")), 1)
 
 
 if __name__ == "__main__":

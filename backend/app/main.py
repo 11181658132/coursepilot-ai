@@ -43,6 +43,8 @@ from app.services.openai_kb import OpenAIKnowledgeBase
 from app.services.rate_limit import SlidingWindowRateLimiter
 from app.services.state import load_state
 from app.services.study_agent import Confirmation, PlanRequest, StudyAgent, TaskUpdate
+from app.services.study_feedback import FeedbackAgent
+from app.services.study_feedback import FeedbackRequest as QuizAnswerRequest
 from app.services.study_store import StudyConflict, StudyStore
 
 app = FastAPI(
@@ -106,6 +108,11 @@ def get_study_store(config: Settings = Depends(get_settings)) -> StudyStore:
 def get_study_agent(config: Settings = Depends(get_settings),
                     store: StudyStore = Depends(get_study_store)) -> StudyAgent:
     return StudyAgent(config, store)
+
+
+def get_feedback_agent(config: Settings = Depends(get_settings),
+                       store: StudyStore = Depends(get_study_store)) -> FeedbackAgent:
+    return FeedbackAgent(config, store)
 
 
 @app.exception_handler(StudyConflict)
@@ -449,6 +456,26 @@ def update_study_task(plan_id: str, task_id: str, request: TaskUpdate,
         return store.set_task(plan_id, task_id, request.done, request.version)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="计划或任务不存在。") from exc
+
+
+@app.post("/api/study-plans/{plan_id}/tasks/{task_id}/answers",
+          dependencies=[Depends(enforce_chat_rate_limit)])
+def submit_study_answer(plan_id: str, task_id: str, request: QuizAnswerRequest,
+                        agent: FeedbackAgent = Depends(get_feedback_agent)):
+    try:
+        return agent.run(plan_id, task_id, request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="计划或任务不存在。") from exc
+
+
+@app.post("/api/study-plans/{plan_id}/feedbacks/{feedback_id}/confirm",
+          dependencies=[Depends(enforce_admin_rate_limit)])
+def confirm_study_feedback(plan_id: str, feedback_id: str, request: Confirmation,
+                           store: StudyStore = Depends(get_study_store)):
+    try:
+        return store.confirm_feedback(plan_id, feedback_id, request.version)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="计划或反馈不存在。") from exc
 
 
 @app.get(

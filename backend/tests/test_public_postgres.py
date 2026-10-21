@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from app.services.public_study_store import PgConnection, PublicStudyStore
 from app.services.study_agent import PlanRequest
+from app.services.study_feedback import FeedbackRequest
 from app.services.study_store import StudyBudgetExceeded
 
 DSN = os.environ.get("COURSEPILOT_TEST_DATABASE_URL", "")
@@ -99,6 +100,35 @@ class PublicPostgresIntegrationTests(unittest.TestCase):
         changed.start(self.request.model_copy(update={"request_id": uuid.uuid4()}))
         with self.assertRaises(StudyBudgetExceeded):
             changed.start(self.request.model_copy(update={"request_id": uuid.uuid4()}))
+
+    def test_feedback_confirmation_is_persistent_scoped_and_shares_existing_ip_quota(self):
+        draft, _ = self.one.start(self.request)
+        tasks = [{"id": uuid.uuid4().hex, "day": day, "title": "Initial task", "done": False,
+                  "minutes": 45, "study_goal": "Review", "quiz_question": "Why cite?",
+                  "quiz_answer": "Trace evidence.", "citations": []} for day in (1, 2)]
+        self.one.finish(draft["id"], "draft", {"tasks": tasks, "request": draft["request"],
+                                                "trace": []})
+        plan = self.one.confirm(draft["id"], 1)
+        request = FeedbackRequest(request_id=uuid.uuid4(), version=plan["version"],
+                                  answer="Synthetic test answer.")
+        feedback, fresh = self.one.begin_feedback(plan["id"], tasks[0]["id"], request)
+        self.assertTrue(fresh)
+        payload = self.one.payload(feedback)
+        payload["assessment"] = {"verdict": "needs_review"}
+        payload["adjustments"] = [{"task_id": tasks[1]["id"], "title": "Adjusted task",
+            "study_goal": "Review evidence support", "quiz_question": "What supports a claim?",
+            "quiz_answer": "Relevant evidence", "citations": []}]
+        self.one.finish(feedback["id"], "draft", payload)
+        with self.assertRaises(KeyError):
+            self.two.confirm_feedback(plan["id"], feedback["id"], feedback["base_version"])
+        updated = self.one.confirm_feedback(plan["id"], feedback["id"], feedback["base_version"])
+        self.assertEqual(updated["tasks"][1]["title"], "Adjusted task")
+        reopened = IntegrationStore(DSN, "a" * 64, "1" * 64, self.schema)
+        self.assertEqual(reopened.get(plan["id"])["feedback"][0]["status"], "active")
+        self.assertEqual(len(self.one.list("DEMO101")), 1)
+        with self.assertRaises(StudyBudgetExceeded):
+            self.one.begin_feedback(plan["id"], tasks[0]["id"], request.model_copy(update={
+                "request_id": uuid.uuid4(), "version": updated["version"]}))
 
 
 if __name__ == "__main__":

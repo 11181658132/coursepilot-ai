@@ -482,6 +482,25 @@ $0.05 acceptance cap. This is one smoke test, not a measured model success rate.
 CI passed **151 backend tests**, including 3 real PostgreSQL integration tests,
 and **24 frontend tests**, type checking, lint and production build.
 
+### Learning feedback loop · 2026-10-21
+
+Confirmed plans now accept self-test answers. A bounded two-turn Agent retrieves
+course evidence, returns explicitly non-authoritative formative feedback and
+possible weaknesses, and may draft edits to unfinished later-day tasks. Uncertain
+feedback cannot replan. A separate human confirmation applies edits atomically;
+progress or version changes invalidate stale proposals. No IDs, days, daily
+minutes or completion flags can be modified by the model.
+
+Feedback history, answer submissions and charge reservations use the existing
+SQLite/PostgreSQL state machine, scoped visitor isolation and idempotency keys.
+Generation and feedback share existing public request/cost quotas; no new database
+migration is required. Source quotes are validated, but semantic scoring quality
+is **not established by quote matching**. The UI discloses answer persistence and
+provider transmission, avoids numeric grades and labels uncertainty explicitly.
+Implementation tests use scripted responses; new actual API spend is **$0**, and
+live feedback quality is not yet measured. See [feedback architecture and safety
+boundaries](docs/STUDY_FEEDBACK.md).
+
 ### Scripted Agent contract evaluation · 2026-10-21
 
 `cd backend && ../.venv/bin/python -m app.agent_evaluation` runs 30 development

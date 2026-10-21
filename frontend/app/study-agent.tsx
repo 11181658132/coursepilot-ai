@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { StudyCitation, StudyPlan, studyRequest } from "../lib/study-api";
+import TaskFeedback from "./study-feedback";
 
 type Props = { apiUrl: string; demoMode: boolean; courses: { course: string }[]; onSource: (citation: StudyCitation) => void; initialCourse?: string; initialGoal?: string };
 const statusLabel = { running: "生成中", draft: "待你确认", active: "已确认", failed: "未生成计划" };
@@ -61,8 +62,8 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
 
   return <section className="studyWorkspace" aria-label="复习计划 Agent">
     <div className="managerHeader"><div><div className="sectionLabel">RETRIEVE · PLAN · CONFIRM · TRACK</div>
-      <h2>复习计划 Agent</h2><p>先查资料再拟定每日任务与自测题。草稿经你确认后才成为正式计划。</p></div></div>
-    {demoMode && <div className="notice">仅使用虚构 DEMO101 资料。计划按匿名访客隔离并保存在服务器数据库；清除 Cookie 或更换浏览器后无法找回。请勿输入真实个人信息。确认和任务更新不调用模型。</div>}
+      <h2>复习计划 Agent</h2><p>查资料、定计划、提交自测，再根据证据反馈调整学习。所有计划改动都由你确认。</p></div></div>
+    {demoMode && <div className="notice">仅使用虚构 DEMO101 资料。计划与自测答案按匿名访客隔离并保存在服务器数据库；答案会发送给模型生成反馈。清除 Cookie 或更换浏览器后无法找回。请勿输入真实个人信息。确认和任务更新不调用模型。</div>}
     <>
       <form className="studyForm" onSubmit={generate}>
         <label>课程<select value={course} disabled={busy} onChange={event => setCourse(event.target.value)}>
@@ -71,7 +72,7 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
         <label>复习天数<input type="number" min={1} max={demoMode ? 3 : 14} value={days} disabled={busy} onChange={event => setDays(Number(event.target.value))} /></label>
         <label>每天分钟数<input type="number" min={15} max={demoMode ? 90 : 180} value={minutes} disabled={busy} onChange={event => setMinutes(Number(event.target.value))} /></label>
         <label className="studyGoal">学习目标<textarea value={goal} minLength={2} maxLength={demoMode ? 400 : 1000} disabled={busy} onChange={event => setGoal(event.target.value)} rows={3} required /></label>
-        <div className="studyGoal"><p>{demoMode ? "最多 4 轮模型调用、2 次检索；单次估算费用预留上限 $0.05、全局每天 $0.10、每月 $0.50（UTC）。每个网络地址每天最多生成 2 次。" : "使用当前课程的自建混合索引。最多 6 轮模型调用、2 次检索；单次估算费用预留上限 $0.05、全局每天 $0.50（UTC）。"}生成会调用模型，确认和勾选任务不调用模型。</p>
+        <div className="studyGoal"><p>{demoMode ? "计划最多 4 轮模型调用、2 次检索；自测反馈最多 2 轮、1 次检索。每次估算费用预留上限 $0.05、全局每天 $0.10、每月 $0.50（UTC）。生成计划和提交自测共用每个网络地址每天 2 次额度。" : "使用当前课程的自建混合索引。单次估算费用预留上限 $0.05、全局每天 $0.50（UTC）。"}生成会调用模型，确认和勾选任务不调用模型。</p>
           <button disabled={busy || !course || !ready}>{busy ? "正在执行，请稍候…" : pending.current ? "重试连接（复用请求）" : "生成新草稿（调用模型）"}</button></div>
       </form>
       {error && <div className="error" role="alert">{error}</div>}
@@ -89,7 +90,8 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
       </aside><div className="studyDetail">
         {!selected && <div className="notice">计划、来源引用、工具执行步骤和任务进度将在这里显示。刷新页面后仍可读取。</div>}
         {selected && <>
-          <div className="studySummary"><h3>{selected.title ?? "Agent 运行"}</h3><p>{statusLabel[selected.status]} · 已记账/预留 ${selected.accounted_cost_usd.toFixed(6)} · 未结算调用 {selected.uncertain_calls}</p>
+          <div className="studySummary"><h3>{selected.title ?? "Agent 运行"}</h3><p>{statusLabel[selected.status]} · 计划生成估算 / 预留 ${selected.accounted_cost_usd.toFixed(6)} · 未结算调用 {selected.uncertain_calls}</p>
+            {(selected.feedback?.length ?? 0) > 0 && <p>自测反馈合计估算 / 预留 ${(selected.feedback ?? []).reduce((sum, item) => sum + item.accounted_cost_usd, 0).toFixed(6)} · 未结算调用 {(selected.feedback ?? []).reduce((sum, item) => sum + item.uncertain_calls, 0)}</p>}
             {selected.status === "draft" && <><p>请先检查学习任务和引用。引用原文匹配不等于所有结论都正确，仍需你审核。</p>
               <button disabled={busy} onClick={() => mutate(`/${selected.id}/confirm`, "POST", { confirmed: true, version: selected.version })}>确认并启用这份计划</button></>}
             {selected.status === "running" && <p>运行尚未完成。请稍后刷新；不要重复创建。若后端曾中断，此记录不会自动恢复，可明确生成新草稿。</p>}
@@ -101,6 +103,7 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
             <label className="taskToggle"><input type="checkbox" checked={task.done} disabled={busy || selected.status !== "active"} onChange={event => mutate(`/${selected.id}/tasks/${task.id}`, "PATCH", { done: event.target.checked, version: selected.version })} />{task.done ? "已完成" : "标记完成（需先确认计划）"}</label>
             <h4>自测题</h4><p>{task.quiz_question}</p><details><summary>查看参考答案</summary><p>{task.quiz_answer}</p></details>
             {task.citations.map((citation, index) => <div className="studyCitation" key={index}><button type="button" disabled={!citation.chunk_id} onClick={() => onSource(citation)}>[{citation.source_id}] {citation.filename}{citation.page ? ` · ${citation.locator_type === "slide" ? "幻灯片" : "位置"} ${citation.page}` : ""} · 查看原文</button><blockquote>{citation.quote}</blockquote></div>)}
+            <TaskFeedback key={`${selected.id}-${task.id}`} plan={selected} task={task} apiUrl={apiUrl} demoMode={demoMode} busy={busy} onPlan={receive} onBusy={setBusy} onError={setError} onSource={onSource} />
           </article>)}
         </>}
       </div></div>
