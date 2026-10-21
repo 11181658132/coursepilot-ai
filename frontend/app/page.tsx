@@ -3,6 +3,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import StudyAgent from "./study-agent";
+import DemoGuide from "./demo-guide";
+import RequestStatus from "./request-status";
+import { requestError } from "../lib/request-error";
 
 type Course = { course: string; lecture_count: number; tutorial_count: number; other_count: number; indexed_count: number };
 type Source = { chunk_id?: string; path?: string; page?: number; locator_type?: "page" | "slide" | "section"; week?: number; source_id?: string };
@@ -69,6 +72,7 @@ export default function Home() {
   const [materialType, setMaterialType] = useState(DEMO_MODE ? "lecture" : "all");
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
+  const [agentBusy, setAgentBusy] = useState(false);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -237,7 +241,7 @@ export default function Home() {
           }),
         });
         const data = await response.json() as Answer & { detail?: string };
-        if (!response.ok) throw new Error(data.detail ?? "提问失败");
+        if (!response.ok) throw new Error(requestError(response.status, data.detail, response.headers.get("Retry-After")));
         const assistantMessage: Message = {
           id: data.message_id,
           conversation_id: conversationId,
@@ -269,7 +273,7 @@ export default function Home() {
         setRemainingToday(data.remaining_today ?? remainingToday);
         setQuestion("");
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "发生未知错误");
+        setError(reason instanceof TypeError ? requestError(503) : reason instanceof Error ? reason.message : "发生未知错误");
       } finally {
         setLoading(false);
       }
@@ -490,7 +494,7 @@ export default function Home() {
       <aside className="appRail">
         <div className="brand"><span className="brandMark" aria-hidden="true">✦</span><span>CoursePilot<span className="brandAI">AI</span></span></div>
         <div className="railLabel">学习工作台 <span>WORKSPACE</span></div>
-        <nav className="viewTabs" aria-label="页面切换">
+        <nav className="viewTabs" aria-label="页面切换" inert={loading || agentBusy}>
           <button aria-current={view === "chat" ? "page" : undefined} className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><span aria-hidden="true">◈</span>课程问答<span className="navHint">RAG</span></button>
           <button aria-current={view === "documents" ? "page" : undefined} className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}><span aria-hidden="true">▤</span>资料管理<span className="navHint">KB</span></button>
           <button aria-current={view === "agent" ? "page" : undefined} className={view === "agent" ? "active" : ""} onClick={() => setView("agent")}><span aria-hidden="true">✧</span>复习计划<span className="navHint">AGENT</span></button>
@@ -506,6 +510,13 @@ export default function Home() {
         <p>{view === "chat" ? "从课程资料中寻找证据，把问题变成清晰的理解。" : view === "documents" ? "管理学习资料，为每一次检索打好基础。" : "基于课程证据，安排每天的学习与自测。"}</p></div>
         <div className="heroArt" aria-hidden="true"><div className="orbit orbitOne" /><div className="orbit orbitTwo" /><div className="artTile artBook">▤</div><div className="artCore">✦</div><div className="artTile artCheck">✓</div><span className="artSpark">✧</span></div>
       </header>
+      {DEMO_MODE && view === "chat" && <DemoGuide disabled={loading || agentBusy} onQuestion={() => {
+        setQuestion(DEMO_SUGGESTIONS[0]); setMaterialType("all");
+        document.getElementById("question")?.focus();
+      }} onAgent={() => {
+        setAgentGoal("根据 DEMO101 课程资料，用 3 天复习 RAG 基础、检索评测与安全，每天安排一道自测题。");
+        setView("agent");
+      }} onDocuments={() => setView("documents")} />}
       <div className="workspaceToolbar">
         {view !== "agent" && <label className="enginePicker">检索引擎
           <select value={engine} disabled={loading || documentLoading} onChange={(event) => {
@@ -520,7 +531,7 @@ export default function Home() {
         {DEMO_MODE && <div className="demoBanner"><span aria-hidden="true">◉</span><strong>真实 AI · 虚构资料</strong><span>{view === "agent" ? "仅使用 DEMO101 示例资料，不包含真实课程。" : "不包含真实课程文件 · 每位访客每天可提问 5 次"}</span></div>}
       </div>
 
-      {view === "agent" ? <StudyAgent apiUrl={API_URL} demoMode={DEMO_MODE} courses={courses} onSource={inspectSource} initialCourse={course} initialGoal={agentGoal} /> : view === "chat" ? <section className="workspace">
+      {view === "agent" ? <StudyAgent apiUrl={API_URL} demoMode={DEMO_MODE} courses={courses} onSource={inspectSource} initialCourse={course} initialGoal={agentGoal} onBusyChange={setAgentBusy} /> : view === "chat" ? <section className="workspace">
         <aside className="sidebar">
           <button className="newChat" onClick={newConversation}>＋ 新对话</button>
           <div className="sectionLabel historyLabel">聊天记录</div>
@@ -603,9 +614,10 @@ export default function Home() {
               {DEMO_SUGGESTIONS.map((suggestion, index) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}><span className="suggestionNumber">0{index + 1}</span>{suggestion}<span className="suggestionArrow" aria-hidden="true">↗</span></button>)}
             </div>}
             <textarea id="question" maxLength={600} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={DEMO_MODE ? "可以询问 RAG、检索评测、安全与成本控制。" : "例如：解释 Week 3 中的核心模型，并比较它与 Week 2 方法的区别。"} rows={5} />
-            <div className="formFooter"><span><span aria-hidden="true">◇</span> 基于课程证据回答 · 附带来源引用</span><button disabled={loading || !course || !question.trim()}>{loading ? "正在检索…" : "开始提问 ↗"}</button></div>
+            <div className="formFooter"><span><span aria-hidden="true">◇</span> {DEMO_MODE ? "点击后调用模型 · 消耗 1 次问答额度" : "基于课程证据回答 · 附带来源引用"}</span><button disabled={loading || !course || !question.trim()}>{loading ? "正在等待回答…" : "开始提问 ↗"}</button></div>
           </form>
-          {error && <div className="error">{error}</div>}
+          <RequestStatus active={loading} />
+          {error && <div className="error" role="alert">{error}</div>}
         </div>
       </section> : <section className="documentWorkspace">
         <div className="managerHeader">

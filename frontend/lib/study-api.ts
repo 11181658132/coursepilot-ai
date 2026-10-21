@@ -16,14 +16,19 @@ export type StudyPlan = {
   feedback?: StudyFeedback[];
 };
 
+import { requestError } from "./request-error";
+
 export async function studyRequest<T>(base: string, path: string, init?: RequestInit, demoMode = false): Promise<T> {
   const response = await fetch(`${demoMode ? "/api/demo" : `${base}/api`}/study-plans${path}`, {
     ...init, headers: { "Content-Type": "application/json", ...init?.headers }, cache: "no-store",
+  }).catch(reason => {
+    if (reason instanceof Error && reason.name === "AbortError") throw reason;
+    throw new Error(requestError(503));
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) {
     const message = typeof data?.detail === "string" ? data.detail : "操作失败，请刷新后重试。";
-    throw new Error(response.status === 409 ? `${message}（状态冲突）` : message);
+    throw new Error(requestError(response.status, message, response.headers.get("Retry-After")));
   }
   return data as T;
 }

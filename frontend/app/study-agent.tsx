@@ -3,11 +3,12 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { StudyCitation, StudyPlan, studyRequest } from "../lib/study-api";
 import TaskFeedback from "./study-feedback";
+import RequestStatus from "./request-status";
 
-type Props = { apiUrl: string; demoMode: boolean; courses: { course: string }[]; onSource: (citation: StudyCitation) => void; initialCourse?: string; initialGoal?: string };
+type Props = { apiUrl: string; demoMode: boolean; courses: { course: string }[]; onSource: (citation: StudyCitation) => void; initialCourse?: string; initialGoal?: string; onBusyChange?: (busy: boolean) => void };
 const statusLabel = { running: "生成中", draft: "待你确认", active: "已确认", failed: "未生成计划" };
 
-export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initialCourse, initialGoal }: Props) {
+export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initialCourse, initialGoal, onBusyChange }: Props) {
   const [course, setCourse] = useState(initialCourse || courses[0]?.course || "");
   const [goal, setGoal] = useState(initialGoal || "根据课程资料，帮我安排考试复习，每天附一道自测题。");
   const [days, setDays] = useState(demoMode ? 3 : 7);
@@ -21,6 +22,7 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
   const pending = useRef<{ key: string; id: string } | null>(null);
   const listVersion = useRef(0);
   const selected = plans.find(plan => plan.id === selectedId);
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 
   useEffect(() => { if (!course && courses.length) setCourse(courses[0].course); }, [courses, course]);
   useEffect(() => {
@@ -75,14 +77,15 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
         <div className="studyGoal"><p>{demoMode ? "计划最多 4 轮模型调用、2 次检索；自测反馈最多 2 轮、1 次检索。每次估算费用预留上限 $0.05、全局每天 $0.10、每月 $0.50（UTC）。生成计划和提交自测共用每个网络地址每天 2 次额度。" : "使用当前课程的自建混合索引。单次估算费用预留上限 $0.05、全局每天 $0.50（UTC）。"}生成会调用模型，确认和勾选任务不调用模型。</p>
           <button disabled={busy || !course || !ready}>{busy ? "正在执行，请稍候…" : pending.current ? "重试连接（复用请求）" : "生成新草稿（调用模型）"}</button></div>
       </form>
-      {error && <div className="error" role="alert">{error}</div>}
+      <RequestStatus active={busy} agent />
+      {error && <div className="error" role="alert">{error}<p>先点击「刷新已保存的运行」（不调用模型）。不要直接新建相同任务。</p></div>}
       <div className="studyLayout"><aside className="studyHistory"><h3>已保存的运行</h3>
         <button disabled={busy || !course} onClick={async () => {
           setError(""); setBusy(true);
-          try { const data = await call<StudyPlan[]>(`?course=${encodeURIComponent(course)}`); setPlans(data); setReady(true); }
+          try { const data = await call<StudyPlan[]>(`?course=${encodeURIComponent(course)}`); setPlans(data); setSelectedId(current => data.some(item => item.id === current) ? current : data[0]?.id ?? ""); setReady(true); }
           catch { setError("无法刷新计划，请检查后端连接。"); }
           finally { setBusy(false); }
-        }}>刷新</button>
+        }}>刷新已保存的运行</button>
         {plans.length === 0 && <p>{demoMode ? "暂无计划。连接成功后即可生成草稿。" : "暂无计划。请先在资料管理中建立混合索引。"}</p>}
         {plans.map(plan => <button className={`historyItem ${selectedId === plan.id ? "active" : ""}`} key={plan.id} disabled={busy} onClick={() => setSelectedId(plan.id)}>
           <strong>{plan.title ?? plan.request.goal}</strong><small>{statusLabel[plan.status]} · {plan.tasks.filter(task => task.done).length}/{plan.tasks.length}</small>

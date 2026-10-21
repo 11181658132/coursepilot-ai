@@ -16,12 +16,12 @@ describe("study Agent API", () => {
   it("reports version conflicts without retrying a write", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "请刷新" }), { status: 409 }));
     vi.stubGlobal("fetch", fetcher);
-    await expect(studyRequest("", "/plan/tasks/task", { method: "PATCH" })).rejects.toThrow("状态冲突");
+    await expect(studyRequest("", "/plan/tasks/task", { method: "PATCH" })).rejects.toThrow("请先刷新已保存的运行");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("does not render raw proxy error pages as error messages", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("private upstream error body", { status: 502 })));
-    await expect(studyRequest("", "")).rejects.toThrow("操作失败，请刷新后重试。");
+    await expect(studyRequest("", "")).rejects.toThrow("尚不能确认操作结果");
   });
 });
