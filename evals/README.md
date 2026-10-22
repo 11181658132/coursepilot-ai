@@ -162,6 +162,17 @@ sets. Do not equate these tags with independently verified model errors.
 
 Methodology reference: [OpenAI evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
 
+## Separate AI-assisted review
+
+The coding assistant may inspect cached answers and sources on the owner's request,
+but those opinions are not human labels. `app.ai_review` validates a separate schema
+with explicit AI provenance, exact response hashes, complete coverage, tri-state
+grades and literal anchors in available fictional source files. It never invokes a
+model, creates grades or changes historical/human reports. Raw labels stay ignored.
+Unknown grades have explicit excluded denominators, never implicit passes.
+See [the Chinese review method](../docs/AI_REVIEW_ZH.md). Independent human coverage
+remains zero; a model-assisted judgment is not a calibrated accuracy benchmark.
+
 ## Targeted no-citation diagnosis
 
 `app.refusal_diagnosis` selects only the 16 historical development variant/case

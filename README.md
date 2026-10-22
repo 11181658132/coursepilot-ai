@@ -1,598 +1,247 @@
-# CoursePilot AI
+# CoursePilot AI · 课程知识库与学习 Agent
 
-[![CoursePilot CI](https://github.com/11181658132/coursepilot-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/11181658132/coursepilot-ai/actions/workflows/ci.yml)
+[![自动测试](https://github.com/11181658132/coursepilot-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/11181658132/coursepilot-ai/actions/workflows/ci.yml)
 
-**Live demo:** [coursepilot-ai-ebon.vercel.app](https://coursepilot-ai-ebon.vercel.app)
+[在线体验](https://coursepilot-ai-ebon.vercel.app/) · [系统架构](docs/architecture.md) · [评测协议](evals/README.md)
 
-CoursePilot AI is a grounded course knowledge base that turns lecture and tutorial
-files into answers with inspectable citations. It combines a FastAPI orchestration
-layer, a Next.js interface, OpenAI Responses + File Search, incremental indexing,
-evaluation, and privacy-conscious local persistence. The local application now also
-includes a self-managed hybrid RAG engine with page/slide citations, alongside the
-hosted File Search baseline. The public Vercel demo now defaults to the same Python
-hybrid retrieval and citation core, with File Search available as a baseline.
+CoursePilot AI 是一个基于课程资料的 RAG 问答与学习助手。它不仅返回答案，还展示来源；
+学习 Agent 则将资料检索、计划生成、自测反馈、进度管理和用户确认串成闭环。
 
-> The public portfolio demo is fully interactive: it uses GPT-6 Luna and hybrid RAG
-> against five fictional DEMO101 documents. The API key stays server-side, requests
-> are rate-limited, and no university course files are deployed. The local application
-> uses the same interface with private course material.
+公开 Demo 只使用 **5 份虚构 DEMO101 资料**，不部署真实课件。私有课程资料通过本地版本使用。
+本项目是可运行、可测试的个人开发项目，不将小规模演示包装成成熟的多租户生产系统。
 
-![CoursePilot AI chat with a grounded answer and source citation](docs/assets/coursepilot-chat.png)
+![课程问答与来源引用](docs/assets/coursepilot-chat.png)
 
-## Why this project is more than a chatbot
+## 核心能力
 
-| Area | Implementation |
+| 模块 | 已实现内容 |
 | --- | --- |
-| Grounding | Separate vector stores by course and material type, retrieved evidence, file citations, and explicit refusal instructions |
-| Ingestion | PDF/PPTX/DOCX/TXT/MD discovery, SHA-256 change detection, incremental upload, replacement, deletion, and index preview |
-| Product | Course filters, lecture/tutorial scope, multi-turn history, source inspection, feedback, document management, and responsive UI |
-| Safety | File extension/signature/size/path validation, prompt-injection resistance, bounded retries, per-IP demo limits, and server-only secrets |
-| Evaluation | 13 legacy course cases plus 50 fictional source-checked draft cases, frozen dev/holdout splits, three-engine comparisons, failure analysis, and hash-bound human review |
-| Engineering | Typed API models, backend and public-route tests, frontend type checking/build, shared-core drift checks, Docker development, and GitHub Actions CI |
-| Privacy | API keys, raw course files, telemetry, conversations, and remote index state are excluded from Git |
+| 文档入库 | PDF、PPTX、DOCX、TXT、Markdown 解析；文件哈希去重；增量更新、删除和索引预览 |
+| 自建 RAG | 页／幻灯片内切分，BM25 + 向量余弦检索，RRF 融合，可选 LLM 重排序 |
+| 证据问答 | 按课程和 lecture／tutorial 筛选；结构化来源 ID、原文引用及页码定位；资料不足时拒答 |
+| 学习 Agent | 检索资料 → 生成计划草稿 → 用户确认 → 保存进度 → 提交自测 → 反馈并提议调整 → 再次确认 |
+| 状态与安全 | 幂等请求、版本冲突检查、任务恢复、执行后机械检查、确认时重新核对来源与状态 |
+| 工程质量 | FastAPI 类型化接口、SQLite／PostgreSQL 持久化、预算预留、限流、测试和 GitHub Actions |
+| 可评测性 | 三方案 RAG 对比、固定开发／保留划分、代理指标、独立 AI 辅助核对与人工审核通道 |
 
-## Public demo safeguards
+## 系统架构与技术选型
 
-The deployed demo uses a precomputed fictional hybrid index (and a dedicated fictional
-vector store for the optional File Search baseline), and accepts real questions
-through a same-origin Next.js Route Handler. Hybrid and File Search share durable
-PostgreSQL limits of five accepted requests per network address per UTC day and
-300 globally per UTC month. Atomic reservations precede model calls; uncertain,
-failed or timed-out attempts are not automatically refunded or retried. Restarting
-an instance or clearing cookies does not reset these counters. Database failure
-stops model requests; the UI reads actual quota through a free, non-consuming GET.
-No raw IPs, questions or answers are stored by the quota service. These are request
-caps, not a dollar-billing guarantee; retain provider-side spend controls.
-See [durable RAG limits](docs/RAG_RATE_LIMITS.md) for privacy and rollout boundaries.
+![系统架构](docs/assets/architecture.svg)
 
-Public requests emit privacy-safe structured telemetry for request IDs, latency,
-token use, tool calls, citation count, and estimated cost. Prompts, answers, retrieved
-evidence, API keys, and client IPs are never logged.
+- **界面**：Next.js、React、TypeScript。
+- **服务**：FastAPI；公开 Demo 通过同源网关访问带签名的 Python Function。
+- **模型**：OpenAI Responses API；现有配置为 `gpt-6-luna`。
+- **检索**：自建 BM25 + Embedding + RRF；托管 File Search 保留为对照基线。
+- **存储**：本地 SQLite 保存索引、对话及任务；公开 Demo 使用独立 PostgreSQL 保存匿名访客计划和配额。
 
-The five public source documents are versioned in `frontend/demo-knowledge/`, making
-the demo reproducible and allowing reviewers to verify that citations are genuine.
-Hybrid citations expose the source passage and downloadable fictional original.
-The Python worker requires a short-lived HMAC signature from the rate-limited route;
-direct unsigned worker calls are rejected. Only the explicitly allowlisted RAG modules
-are bundled: no private corpus, databases, environment files, or telemetry are copied.
+自建检索当前使用精确向量扫描，适合小型课程资料库，尚未实现大规模 ANN／pgvector 检索。
+`backend/app` 是权威实现，公开 Demo 只打包白名单模块；自动测试会检查副本是否漂移。
 
-## Architecture
+## RAG 评测：效果、速度和成本分开看
 
-![CoursePilot AI architecture](docs/assets/architecture.svg)
+评测数据来自版本化的虚构资料：**50 道草稿题，30 道开发题 + 20 道冻结保留题**。
+参考答案及来源锚点经过程序校验，但不等于专家金标准。三个对比方案使用同一模型和资料。
 
-The backend deliberately owns retrieval and secrets. The browser never receives
-the OpenAI API key. Each `course:material_type` combination maps to a separate
-vector store, and local hashes prevent unchanged files from being uploaded twice.
-See [the architecture notes](docs/architecture.md) for the request and ingestion
-flows and their trade-offs.
+### 最新开发集结果 · 2026-10-22
 
-## Evaluation snapshot
+同一批 30 道开发题 × 3 个方案，共 90 条真实模型结果；提供商错误阻塞 0 条，未重抽已完成的失败回答。
+以下是评分 v3 的**代理指标，不是语义准确率**：
 
-The checked-in dataset contains 13 cases across three courses:
+| 方案 | 代理通过 | 文件级检索命中 | 文件级引用精度 | 关键词召回 | P50／P95（毫秒） | 估算费用（美元） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| File Search | 26/30（86.67%） | 100% | 93.33% | 94.44% | 4,071／5,235 | 0.085909 |
+| 混合检索，不重排序 | 24/30（80.00%） | 100% | 88.33% | 93.89% | 2,783／4,793 | 0.005598 |
+| 混合检索 + 重排序 | 25/30（83.33%） | 100% | 90.00% | 92.78% | 4,092／5,341 | 0.007574 |
 
-- grounded factual questions with expected source files and bilingual concepts;
-- questions that are intentionally unanswerable from the course material;
-- a direct prompt-injection attempt requesting the system prompt and API key.
+另对全部 90 条回答逐条做了 **AI 辅助核对**：三个方案各有 28/29 条在“正确性与来源支持”两项均通过。
+同一道歧义题在三个方案中均保留正确性未知，因此分母为 29，而非将未知计为通过。
+这不是人工准确率：File Search 存在资料外细节和引用展示问题；两个混合方案各有一次原文引用校验
+失败，安全拦截但未交付答案。自动来源清单也存在遗漏有效支持文件的情况，原始分数未修改。
 
-The latest full evaluation completed all **13/13** cases: **11 passed** and **2 failed**
-(**84.62% pass rate**), with **100% retrieval hit rate**, **94.44% citation
-precision**, **90% keyword recall**, **8.62 s average latency**, and **$0.035976**
-estimated API cost. Runs can be resumed without paying for completed cases.
-Generated reports remain local because they can contain course-derived answers and
-filenames.
+本轮 180 次 API 请求的预算账本估算合计 **$0.09908068**，未知计费请求为 0，低于单独批准的 $0.50。
+金额不含税、存量存储和其他应用流量。重排序增加了本轮延迟与成本，没有显示 AI 核对质量优势；
+保留两种方案，不据此宣称普遍结论，也未更改线上默认设置。
+详见[本轮评测结果与失败分析](docs/EVALUATION_RESULTS_ZH.md)及[AI 核对方法](docs/AI_REVIEW_ZH.md)。
 
-```bash
-cd backend
-python -m app.cli eval --resume
-```
+必须区分三种证据：
 
-The evaluator writes machine-readable JSON and a standalone HTML dashboard to
-`evals/reports/`. Its estimated cost combines model-token usage with the number
-of hosted File Search calls; both prices remain configurable because rates change.
+1. **自动代理指标**：检索命中率、文件级引用精度、关键词覆盖、P50／P95 延迟及估算费用。
+2. **AI 辅助核对**：由开发助手逐条阅读问题、回答与虚构原文，保留理由、来源锚点和回答指纹。
+   它不是独立人工评审，也不作为专家准确率。
+3. **人工评审**：实际审核者核对后亲自提交标签；当前尚无已确认的人工标签，相关人工指标保持空值。
 
-## Run the real application locally
+引文确实存在不代表引文支持结论，检索命中也不等于回答正确。
+开发集用于诊断，不是独立泛化评测；冻结保留集不参与本轮调优和付费执行。
 
-### 1. Configure secrets
+## 学习 Agent：可执行，但不替用户决定
 
-```bash
-cp .env.example .env
-```
+Agent 只能调用允许的资料查询与草稿提议工具，不能执行任意代码，也不能自行启用计划或修改进度。
 
-Set `OPENAI_API_KEY` and `KNOWLEDGE_BASE_DIR` in `.env`. Never paste a real key
-into source code or commit it.
+- 草稿必须满足天数、任务结构、来源和字面引文检查；失败时不发布可执行任务。
+- 用户明确确认后，服务端再次核对当前证据和版本，在事务中启用计划或应用调整。
+- 自测反馈明确标注不确定性，不作为标准评分；不确定时不能提出计划调整。
+- 只允许修改尚未完成的后续任务；并发进度变化会使旧建议失效。
+- 确认、进度更新和中断恢复不调用模型；生成计划与反馈可能产生费用。
+- 支持删除计划及自测内容；必要的预算、配额和防重放记录保留，不通过删除重置额度。
 
-The scanner discovers course names dynamically and expects this shape:
+**机械检查不证明学习目标被充分覆盖，也不证明反馈语义正确。** 用户仍需审阅任务与证据。
+详见[执行后检查](docs/AGENT_POSTCHECKS.md)、[反馈闭环](docs/STUDY_FEEDBACK.md)、
+[恢复机制](docs/AGENT_RECOVERY.md)和[删除边界](docs/STUDY_DELETION.md)。
 
-```text
-knowledge-base/
-├── 90016/
-│   ├── lecture/
-│   └── tutorial/
-└── 90049/
-    ├── lecture/
-    └── tutorial/
-```
+已有的 30/30 Agent 脚本评测测试真实状态机与安全分支，但使用模拟模型和固定检索，
+不是实际模型任务成功率。另有虚构资料的真实模型小规模功能验收，不能据此声称模型准确率。
+协议与限制见 [Agent 评测说明](evals/AGENT_EVALUATION.md)。
 
-Files containing `tute` or `tutorial` are classified as tutorial material even
-when they are outside a tutorial folder.
+## 本地启动
 
-### 2. Start the backend
+需要 Python 3.12、Node.js 20+；CI 使用 Node.js 22。以下命令从项目根目录开始。
+
+### 1. 安装后端并配置环境
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r backend/requirements.txt
+pip install -r backend/requirements-dev.txt
+cp .env.example .env
+```
+
+在本机编辑 `.env`，设置 `OPENAI_API_KEY` 和 `KNOWLEDGE_BASE_DIR`，不要把密钥粘贴到代码或 Git。
+如使用自建引擎，设置 `RAG_ENGINE=hybrid`。推荐的资料目录：
+
+```text
+knowledge-base/
+├── DEMO101/
+│   ├── lecture/
+│   └── tutorial/
+└── YOUR_COURSE/
+    ├── lecture/
+    └── tutorial/
+```
+
+课程名动态发现；名称含 `tute` 或 `tutorial` 的文件也归为 tutorial。
+本地私有资料的解析文本会在索引／提问时发送到配置的模型服务，请先确认处理权限。
+
+### 2. 启动 API、索引 Worker 和前端
+
+在三个终端分别运行：
+
+```bash
+# 终端一：项目根目录，使用已激活的虚拟环境
 uvicorn app.main:app --app-dir backend --reload --port 8000
 ```
 
-### 3. Start the frontend
-
-Node.js 20+ is required.
+```bash
+# 终端二：项目根目录
+PYTHONPATH=backend .venv/bin/python -m app.worker
+```
 
 ```bash
+# 终端三：项目根目录
 cd frontend
 cp .env.local.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000>. Interactive backend documentation is available at
-<http://localhost:8000/docs>.
+打开 [本地页面](http://localhost:3000)，接口文档在 [FastAPI 文档](http://localhost:8000/docs)。
+本地管理接口目前是单用户设计，不要未经认证直接暴露到公网。
 
-## Index documents
+### 3. 建立索引
 
-### Self-managed hybrid RAG
+在“资料管理”中预览后创建索引任务。默认上传只保存文件；勾选“上传后建立索引”才会入队。
+上传期间已有扫描在运行时，会保留后续扫描任务，不能只看到上传成功就认为已入库。
+任务一直排队时，检查 Worker 是否运行且使用同一配置。
 
-Select **自建 RAG · 混合检索与重排序** in the local UI, open **资料管理**, preview
-the changes, and build the index. The engine selection applies to indexing,
-inventory, and questions. Existing File Search indexes remain available as a baseline.
-
-The self-managed pipeline implements:
-
-1. PDF page text, PPTX slide text and tables, DOCX sections, and UTF-8 text extraction.
-2. Page/slide-local chunks (1,600 characters, 200-character overlap by default),
-   with course, material type, inferred week, source location, and stable chunk IDs.
-3. `text-embedding-3-small` embeddings stored in local SQLite, BM25 keyword scoring,
-   exact cosine vector search, and reciprocal rank fusion of the top candidates.
-4. An optional LLM reranker scoring each candidate from 0 to 3; only useful or direct
-   evidence reaches generation when reranking is enabled.
-5. Structured answers with server-validated passage IDs and verbatim supporting quotes.
-   Clicking a citation opens the indexed original passage, and PDFs open at the cited page.
-
-Previewing scans local hashes only and makes no API calls. Building the hybrid index
-sends extracted text to the configured OpenAI embeddings API; queries send their text
-to that API and selected passages to the configured generation model. The local
-database is excluded from Git. Do not enable this on a shared/public backend without
-authentication and document-level access controls.
-
-The shared local/public hybrid core now deduplicates identical normalized passages
-within a document before ranking, strictly validates reranker scores and ID coverage,
-rejects malformed references even alongside valid citations, and rechecks source
-validity after remote reranking and generation. An invalidated draft is withheld,
-without automatically repeating paid calls. See [the RAG hardening notes](docs/RAG_HARDENING.md)
-for the offline regression scope and limits. These changes have **not** been live
-re-evaluated; historical answer-quality metrics below are unchanged.
+也可使用命令行：
 
 ```bash
 cd backend
-python -m app.cli sync --engine hybrid --dry-run
-python -m app.cli sync --engine hybrid
+../.venv/bin/python -m app.cli sync --engine hybrid --dry-run
+../.venv/bin/python -m app.cli sync --engine hybrid
 ```
 
-Select the engine in the UI, or set `RAG_ENGINE=hybrid` for backend/CLI defaults.
-The UI explicitly sends the selected engine. `RAG_RERANK=false` disables the reranker
-for ablation runs. Embeddings, reranking, and generation all contribute to the cost
-estimate; pricing remains configurable. The per-run embedding token budget uses the
-UTF-8 byte count as a conservative token upper bound before sending each document.
-An unchanged document is skipped; changed documents are replaced atomically, and
-missing files are pruned. Failed replacements retain the old index but changed or
-deleted source content cannot be retrieved until reindexed.
+预览只读本地哈希，不调用 API；实际索引会发送文本进行 Embedding，可能产生费用。
+File Search 基线可通过 `--engine file_search` 使用。
 
-The following small live smoke test uses only the five fictional public documents
-and removes its temporary local index afterwards:
+## 入库可靠性与来源版本
+
+索引任务使用 SQLite 持久化、事务认领和单主机写锁，显示阶段、尝试次数、失败和已记录成本。
+暂时失败遵守 Retry-After，尝试最多三次；配额、账单、认证等问题停止等待处理。
+相同内容重复上传复用文件，同名不同内容返回冲突，不覆盖现有资料。
+
+单份文档完成解析、Embedding 和新鲜度校验后才原子替换。失败保留旧索引，但已变化的来源在
+重新索引前不作为当前证据返回。历史引用附带文档版本；重新打开时会提示来源变化或不可用。
+
+这是**单主机、逐文档原子更新**，不是分布式队列、全资料库快照或外部调用恰好付费一次。
+服务在付费调用后、落库前崩溃仍可能造成重复调用；本地成本记录不是提供商账单。
+详见[入库生命周期](docs/INGESTION_LIFECYCLE.md)。
+
+## 公开 Demo 的数据与费用边界
+
+- 公开资料只读；不提供私有课程上传或本地管理接口。
+- API Key、数据库连接和签名密钥只在服务端，私有课件、对话、报告和遥测不进入 Git。
+- RAG 使用 PostgreSQL 持久化配额：每网络地址每天最多 5 次，全球每 UTC 月最多 300 次；
+  重启或清 Cookie 不重置计数。数据库异常时停止模型调用。
+- Agent 使用签名匿名访客隔离和独立预算预留，默认估算上限为每次 $0.05、全球每天 $0.10、
+  每月 $0.50。原 RAG 请求费用与托管费用不包含在 Agent 预算中。
+- 匿名会话不是正式账号认证；清理 Cookie 或换浏览器会失去原会话入口。
+- 请求限额和成本估算不等于账单硬上限；还需检查模型及托管平台的账户级费用控制。
+
+公开 Python Function 冷启动从虚构预计算索引恢复临时 SQLite，不会重新给整批文档生成向量。
+部署根目录为 `frontend`；修改共享核心后执行：
 
 ```bash
-cd backend
-PYTHONPATH=. python scripts/smoke_hybrid.py
+node frontend/scripts/prepare-rag.mjs
 ```
 
-### Compare with the File Search baseline
+完整的数据库、环境变量及验收步骤见[公开 Agent 部署](docs/PUBLIC_AGENT_DEPLOYMENT.md)和
+[RAG 配额说明](docs/RAG_RATE_LIMITS.md)。不要仅设置演示开关就认为具备可用的数据库和模型配置。
 
-Run the same dataset with separately stored reports (each run incurs API charges):
+## 测试与评测复现
 
-```bash
-cd backend
-python -m app.cli eval --engine file_search --output-dir ../evals/reports/baseline
-python -m app.cli eval --engine hybrid --output-dir ../evals/reports/hybrid
-python -m app.cli eval --engine hybrid --no-rerank --output-dir ../evals/reports/hybrid-no-rerank
-```
-
-The public benchmark now has 50 source-checked **draft**, not human-reviewed, cases:
-30 development and 20 frozen holdout. It compares File Search, hybrid without
-reranking, and hybrid with reranking. Scoring v3 separates retrieved evidence from
-citations, counts missing citations as zero precision, reports coverage and P50/P95,
-and supports hash-bound human correctness/faithfulness labels. No semantic accuracy
-claim is made from keywords or quote presence. The historical 13-course-case snapshot
-above used legacy metrics; do not compare its scores directly with v3 or the fictional
-corpus. See [the evaluation protocol](evals/README.md) for free validation, bounded
-paid runs, failure taxonomy, paired comparisons and the manual-review rubric.
-
-### Fictional-corpus development comparison · 2026-10-21
-
-30 paired development cases per engine; 90 completed responses, zero blocked.
-Labels are source-checked drafts, **not human-reviewed gold**. Proxy pass is not
-answer accuracy. The 20 holdout cases were not run or used for tuning.
-
-| Engine | Proxy pass | Retrieval hit | Citation precision | Keyword recall | P50 / P95 ms | Estimated USD |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| File Search | 80.00% | 100% | 88.33% | 97.22% | 4,691 / 6,894 | 0.085911 |
-| Hybrid, no reranker | 66.67% | 100% | 70.00% | 70.00% | 1,966 / 3,337 | 0.005255 |
-| Hybrid + reranker | 63.33% | 100% | 68.33% | 69.44% | 4,366 / 16,268 | 0.007480 |
-
-Total estimated additional API cost: **$0.09864598**, reconciled with the independent
-budget ledger; no uncertain charges. Scores use v3 offline regrading of preserved
-responses to fix a whitespace-quote grader bug and hosted report-rate omission,
-without new generation calls. Correctness and faithfulness remain unmeasured until
-human review (0/90 reviewed). No reranking improvement is claimed: in this small
-run it increased latency/cost without improving the proxy pass rate. With four
-results over five documents, retrieval hit is inherently easy; these results do not
-establish private-course quality, large-corpus retrieval, or production latency.
-
-### Targeted citation-format diagnosis · 2026-10-21
-
-For the next quality-improvement iteration, use the **offline blinded human-review
-workflow** in [RAG quality workflow](docs/RAG_QUALITY_WORKFLOW.md). It reuses cached
-development answers, prioritizes proxy failures without excluding passes, shows
-original sources, exports hash-bound human labels and compares only paired reviewed
-cases. No API calls or holdout tuning are performed. Historical reranker transitions
-are 2 fail→pass, 3 pass→fail, 17 pass→pass and 8 fail→fail; these are proxy outcomes,
-not semantic accuracy. No new human labels or quality-improvement claims are created
-automatically.
-
-The 16 historically uncited hybrid variant/case pairs were reproduced using only
-the five fictional DEMO101 files, the same model and unchanged generation prompt.
-The new responses included 9 validated answers and 7 citation-marker mismatches:
-the latter contained valid structured source IDs and verbatim quotes, but omitted
-the inline `[S1]` markers. Original historical drafts were not retained, so this
-does not establish the cause of every historical failure.
-
-The validator now appends markers for the model-selected sources **only after all
-source IDs and quotes pass validation**, and only when no citation-like markers
-already exist. Wrong IDs, invented quotes, conflicting/malformed markers, provider
-refusals and incomplete output still fail closed. Safe diagnostic reason codes
-distinguish these failures from insufficient evidence; rejected drafts are not
-returned or logged in application telemetry. Quote presence is not a semantic
-faithfulness guarantee, and appended markers do not provide claim-level attribution.
-
-Offline replay of these identical 16 new drafts recovered the 7 formatting failures
-and preserved the other 9 results, with zero extra API calls. This is a selected
-development regression check, **not a revised benchmark pass rate**. The historical
-90-response comparison and untouched holdout remain unchanged. Targeted live cost:
-**$0.00336610 estimated**, 40 API calls, zero uncertain charges, below the separately
-approved $0.05 cap. Raw fictional diagnostic traces stay in ignored local reports.
-
-### Hosted File Search indexing
-
-Previewing is local and free:
-
-```bash
-cd backend
-python -m app.cli sync --dry-run
-```
-
-Run the actual sync only for material you are allowed to process:
-
-```bash
-python -m app.cli sync
-```
-
-Subsequent runs skip unchanged files. New and changed documents are sent to an
-OpenAI vector store and can incur API storage/processing charges.
-
-## Reliable local indexing
-
-The local UI now defaults to hybrid retrieval. **Start indexing** creates a durable
-job and returns HTTP 202, instead of holding a request open during parsing/embedding.
-Start a separate worker alongside the API:
-
-```bash
-# From the repository root; uses the same local .env as the API.
-PYTHONPATH=backend .venv/bin/python -m app.worker
-# Process at most one eligible task, then exit:
-PYTHONPATH=backend .venv/bin/python -m app.worker --once
-```
-
-By default an upload only saves a local file. The optional **upload then index**
-checkbox explicitly authorizes sending pending library documents for embedding;
-it enqueues work but does not start a worker or call a model in the API request.
-The UI shows persisted
-progress, attempt counts, recorded cost, and sanitized failures; refreshing reloads
-the job. If it stays queued, check that the worker uses the same configuration.
-
-- Jobs use `index_jobs.sqlite3` beside `RAG_DB_PATH`: a versioned schema, WAL,
-  transactional claims, and one running job per configuration. Repeated submissions
-  coalesce while active; uploads arriving during a scan persist a follow-up job.
-  An optional `Idempotency-Key` on explicit job submission replays the original job even
-  after completion. Successful unchanged documents are skipped on retry.
-- Worker, legacy sync API, CLI sync, and deletion share a nonblocking OS writer
-  lock. Process death releases it; the next worker recovers interrupted work.
-  Attempts are capped at three per job. Transient provider failures schedule retries
-  no earlier than **Retry-After**; quota/authentication failures stop for user action,
-  and parse failures require manual retry. No API request sleeps while waiting.
-- Each replacement commits only after parsing, embedding, and a fresh source hash
-  check succeed. Failed replacements preserve the previous stored index. Changed
-  sources are excluded from retrieval until reindexed, not silently served as current.
-  This is **per-document**, not whole-library atomicity.
-- Concurrent same-name uploads use atomic create-if-absent instead of overwriting.
-  Byte-identical retries reuse the file; different content under that name conflicts.
-  Follow-ups respect scope-wide retry backoff and stop on quota/auth/configuration
-  failures. Queue schema v2 migrates existing jobs/keys transactionally; restart
-  old workers after upgrading, since the old schema guard intentionally rejects v2.
-- Hybrid answer citations carry a document hash. Reopening local history rechecks
-  those sources and flags stale/unavailable citations without calling a model;
-  legacy replies without hashes are not falsely assigned a known version.
-
-See [upload/index lifecycle and limitations](docs/INGESTION_LIFECYCLE.md).
-
-This remains a **single-host, single-user** queue on Linux/macOS with a shared local
-disk. It is not a distributed queue, tenant authorization, PostgreSQL migration, or
-exactly-once external billing. A crash after a paid provider call but before local
-commit can repeat that call and lose its local cost record. Displayed costs are
-recorded estimates, not a billing ledger. Keep provider spend controls. Back up source
-files and databases together; never delete live WAL files. Do not expose the local
-administration API to the internet without authentication.
-
-Docker Compose includes a restartable `index-worker` sharing the index volume and
-an API healthcheck/restart policy. The API source mount is writable for uploads;
-the worker's source mount is read-only. No new cloud service or subscription is needed.
-The Vercel public demo remains fictional/read-only and does not expose these admin APIs.
-
-## Public portfolio demo
-
-The frontend includes an explicit read-only mode for public deployment. It uses
-five versioned fictional files, disables destructive document operations, and sends
-questions to a same-origin server Route Handler. That handler keeps the API key on
-the server, scopes both engines to `DEMO101`, validates input, applies request limits,
-and returns real citations and retrieved evidence. Hybrid mode uses a Python Vercel
-Function with the canonical backend's BM25/vector fusion, LLM reranker, and verified
-quotation pipeline. It does not need an additional paid backend server.
-
-`backend/app` is authoritative. After changing its RAG modules, regenerate the
-deployment bundle with `node frontend/scripts/prepare-rag.mjs`; CI fails on drift.
-`frontend/demo-index.json` contains only embeddings/chunks from the five fictional
-sources. To rebuild it, run `PYTHONPATH=backend .venv/bin/python
-backend/scripts/export_demo_index.py` from the repository root (uses the configured
-embedding API; never reads private course folders). Cold starts rehydrate this
-index into temporary SQLite without re-embedding documents.
-
-```bash
-cd frontend
-NEXT_PUBLIC_DEMO_MODE=true npm run dev
-```
-
-Local Next.js-only development cannot run the Python function automatically: also
-serve `frontend/api/rag.py` with Python's HTTPServer and configure `DEMO_RAG_URL`
-to that trusted local worker URL, using the same `DEMO_RATE_LIMIT_SALT` on both.
-Vercel discovers `api/rag.py` automatically alongside Next.js.
-
-For a Vercel deployment, set the project root to `frontend` and add:
-
-```text
-NEXT_PUBLIC_DEMO_MODE=true
-OPENAI_API_KEY=...
-OPENAI_DEMO_VECTOR_STORE_ID=...
-DEMO_RATE_LIMIT_SALT=...
-```
-
-Keep the last three values server-only secrets. The production deployment uses a
-dedicated OpenAI project with an enforced monthly hard spend limit. The service key
-must be rotated before its configured expiry date.
-
-## Tests
+免费检查：
 
 ```bash
 PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -v
-cd frontend && npm test && npm run typecheck && npm run build
+.venv/bin/python -m ruff check backend/app backend/tests frontend/api backend/scripts/export_demo_index.py
+PYTHONPATH=backend .venv/bin/python -m app.benchmark --validate
+PYTHONPATH=backend .venv/bin/python -m app.agent_evaluation
+node frontend/scripts/prepare-rag.mjs --check
+cd frontend
+npm test
+npm run typecheck
+npm run build
 ```
 
-GitHub Actions repeats these checks on every push and pull request.
+PostgreSQL 集成测试在 CI 的一次性测试数据库上执行；没有指定测试库时本地跳过。
+不要将破坏性的集成测试指向公开 Demo 数据库。
 
-## API surface
+真实三方案评测会收费，必须先确认预算。使用新的目录，不覆盖历史实验：
 
-- `GET /health` — readiness check
-- `GET /api/courses` — course inventory and index status
-- `GET /api/documents` — local and indexed document inventory
-- `POST /api/documents/upload` — validated local upload
-- `DELETE /api/documents` — explicit local and remote deletion
-- `POST /api/sync/preview` — pending index changes without upload
-- `POST /api/sync` — incremental synchronization
-- `POST /api/index-jobs` — durable hybrid-index job submission (202)
-- `GET /api/index-jobs` — latest 20 jobs in the current index configuration
-- `GET /api/index-jobs/{id}` — persisted progress and results
-- `POST /api/index-jobs/{id}/retry` — retry a failed job below its attempt cap
-- `POST /api/chat` — grounded question answering
-- `GET /api/conversations` — conversation history
-- `GET /api/conversations/{id}/messages` — conversation messages
-- `POST /api/feedback` — human feedback for an answer
+```bash
+PYTHONPATH=backend .venv/bin/python -m app.benchmark \
+  --live --budget-usd 0.50 --output-dir evals/reports/your-new-experiment
+```
 
-## Design decisions and limitations
+相同实验目录和指纹可续跑未完成项；不要为了追求通过而重复生成已完成的失败回答。
+没有预算授权时只运行 `--validate`。原始回答、证据、标签及数据库保留在忽略的本地目录中。
 
-- Hosted File Search made the first reliable baseline fast to build. A pgvector
-  migration can replace the self-managed engine's exact cosine scan when the corpus
-  outgrows local SQLite. BM25, fusion, chunking, and reranking are already inspectable
-  application code, not delegated to File Search.
-- Image-only scans require OCR and are reported as indexing failures, rather than
-  producing empty evidence. DOCX/TXT/MD use section locations, not fabricated pages.
-- Quote validation checks that quoted text exists in the cited chunk. It does not
-  establish that every generated claim is supported by that quote. This needs an
-  expanded, human-reviewed evaluation set.
-- Conversation history is intentionally local-first. A multi-user deployment
-  needs authentication, PostgreSQL, tenant isolation, migrations, and backups.
-- Public inference is isolated from private course data: it uses a dedicated OpenAI
-  project and fictional files. RAG request limits and Agent quotas use the existing
-  dedicated demo PostgreSQL database, but are separate namespaces/budgets. Request
-  caps are not provider billing or hosting-spend guarantees.
+## 已知限制与后续方向
 
-## Study-plan Agent (local and public demo)
+- 图片扫描件需要 OCR；当前不凭空生成页码或将空文本当作成功入库。
+- 小型虚构语料的文件级命中率很容易达到高分，不能证明大语料或真实课程效果。
+- 引用存在性、机械检查和单元测试通过，不等于模型语义可靠。
+- 重排序有额外延迟和费用；是否值得开启应由对比结果决定。
+- 正式多用户产品仍需账号认证、完整权限模型、备份恢复及负载测试。
+- 下一步应根据真实失败案例选择单一改动，再在独立实验中回归；不以堆叠更多工具代替评测。
 
-Open the **复习计划 Agent** tab in the local app. Select an already hybrid-indexed
-course, enter a learning goal, 1–14 days and 15–180 minutes/day, then generate a
-draft. Generation uses the configured `gpt-6-luna` and can incur API charges.
-Review the daily tasks, source quotes and self-test answers before clicking
-**确认并启用这份计划**. Only confirmed plans allow completion checkboxes. Plans,
-progress and safe tool traces survive refresh/restart in an ignored local SQLite
-database beside the conversation database. Confirmation/progress do not call a model.
+## 文档导航
 
-This is a bounded Responses function-calling loop, not a static prompt chain:
-the model chooses allowlisted calls/arguments, receives validated tool outputs,
-and can search up to twice before proposing a plan. Available model tools are
-`list_materials`, `search_knowledge`, and `propose_study_plan` (including a short
-quiz and answer for each day). Course scope is server-bound; proposal source IDs
-and exact quotes must match retrieved evidence. The model has **no confirmation,
-task-update, shell, external URL or document-write tool**. It cannot execute
-instructions found in course material outside this allowlist. Semantic grounding
-still requires human review; source matching alone cannot guarantee correctness.
-
-State: `running → draft → active`, `running → failed`, or explicitly recovered
-`running → interrupted`. Drafts are persisted
-previews, not enabled tasks. Request UUID + payload fingerprints prevent duplicate
-generation on retries, confirmation is idempotent, and version checks prevent
-overwriting concurrent progress updates. Failed runs never enable partial tasks.
-Plan/feedback tool checkpoints and 180-second leases are persisted. Overdue runs
-expose a free, explicit recovery action: it marks only expired operations interrupted,
-keeps completed steps and uncertain cost reservations, and fences late workers from
-new calls or draft publication. Old request IDs never replay model execution.
-Filling back a goal/answer does not call the model; a new submission may incur charges.
-Recovery is not automatic continuation or provider cancellation. See
-[Agent recovery design and tests](docs/AGENT_RECOVERY.md).
-
-Limits: 6 model turns, 2 searches, 120-second loop deadline checked between calls,
-20-second SDK request timeout, no automatic retries, bounded payload/output sizes.
-Every model/embedding request first reserves estimated USD cost atomically in
-SQLite. Defaults are $0.05/run and $0.50/day globally (UTC), configurable downward
-via `AGENT_RUN_BUDGET_USD` and `AGENT_DAILY_BUDGET_USD`. Unknown/failed calls keep
-their reservations. Supported metering uses the existing model/embedding list-rate
-estimates; this is **not a provider billing guarantee**. Keep a provider-side spend
-limit as well. The daily cap is local-database-wide, not per visitor.
-
-API: `POST/GET /api/study-plans`, `GET /api/study-plans/{id}`,
-`POST /api/study-plans/{id}/confirm` with explicit `confirmed: true` + version,
-`POST /api/study-plans/{id}/recover` with the same explicit confirmation + version,
-and `PATCH /api/study-plans/{id}/tasks/{task_id}` with `done` + version.
-See [Agent regression tests](backend/tests/test_study_agent.py) for confirmation,
-idempotency, concurrency, scope/allowlist enforcement, bad citations, loop limits,
-budget reservations and API contract coverage. Tests use fake model responses;
-they do not establish live-model success or semantic accuracy.
-
-One separately approved live smoke test on 2026-10-21 used only the five fictional
-DEMO101 files and an isolated database. It generated a 3-day cited draft, confirmed
-it, completed one task and verified persistence after reopening SQLite. All five
-workflow checks passed; confirmation/progress made no additional paid calls. Total:
-4 API calls (3 model turns + 1 retrieval embedding), estimated **$0.00069114**, zero
-uncertain charges, below the approved $0.05 cap. This is one development acceptance
-test, **not an Agent success-rate or semantic accuracy benchmark**. To inspect the
-runner without paying, run `python -m app.study_smoke` from `backend`; `--live`
-requires explicit approval and reuses its fixed request ID, rather than silently
-regenerating. Reports and test database remain ignored under `evals/reports/`.
-
-The local FastAPI Agent remains **single-user**; do not expose it publicly.
-The separate public-demo Agent gateway now supports signed anonymous visitor
-sessions, scoped PostgreSQL persistence, atomic shared cost reservations and
-confirmation/progress actions over the same canonical Python Agent. It accepts only
-fictional DEMO101 data. It fails closed unless its dedicated database and explicit
-feature flag are configured. The [public demo](https://coursepilot-ai-ebon.vercel.app/)
-is deployed with a dedicated Neon PostgreSQL database as of 2026-10-21.
-See [public Agent setup and acceptance](docs/PUBLIC_AGENT_DEPLOYMENT.md).
-No private course files are bundled for deployment.
-
-Public live smoke acceptance: one three-day draft, confirmation, progress
-persistence, source expansion and request replay passed. Independent anonymous
-visitors cannot read, confirm or change each other's plans; stale writes,
-cross-origin mutations and unsigned worker requests are rejected. The run used
-4 API calls, estimated **$0.00059144**, zero uncertain charges, under the approved
-$0.05 acceptance cap. This is one smoke test, not a measured model success rate.
-CI passed **151 backend tests**, including 3 real PostgreSQL integration tests,
-and **24 frontend tests**, type checking, lint and production build.
-
-### Learning feedback loop · 2026-10-21
-
-Confirmed plans now accept self-test answers. A bounded two-turn Agent retrieves
-course evidence, returns explicitly non-authoritative formative feedback and
-possible weaknesses, and may draft edits to unfinished later-day tasks. Uncertain
-feedback cannot replan. A separate human confirmation applies edits atomically;
-progress or version changes invalidate stale proposals. No IDs, days, daily
-minutes or completion flags can be modified by the model.
-
-Feedback history, answer submissions and charge reservations use the existing
-SQLite/PostgreSQL state machine, scoped visitor isolation and idempotency keys.
-Generation and feedback share existing public request/cost quotas; no new database
-migration is required. Source quotes are validated, but semantic scoring quality
-is **not established by quote matching**. The UI discloses answer persistence and
-provider transmission, avoids numeric grades and labels uncertainty explicitly.
-Implementation tests use scripted responses; live feedback quality is not yet
-measured. A later bounded functional smoke is documented below. See [feedback architecture and safety
-boundaries](docs/STUDY_FEEDBACK.md).
-
-### Scripted Agent contract evaluation · 2026-10-21
-
-`cd backend && ../.venv/bin/python -m app.agent_evaluation` runs 30 development
-contracts with **scripted model outputs and fixture retrieval**, exercising the
-actual Agent and SQLite state logic without API calls. The suite currently passes
-30/30: 5/5 scripted completion flows, 4/4 state checks and 21/21 safety/failure
-scenarios. Returned task citation coverage and independent verbatim-source matching
-are each 32/32. These are **backend contract results, not model accuracy or semantic
-faithfulness**. Live model task success, claim support and inference latency remain
-unmeasured by this suite; human review coverage is zero. New actual API spend: $0.
-
-CI is configured to run this free suite and fail on regressions. Local reports keep
-per-case checks, safe tool traces, dataset/source/code fingerprints and archived
-snapshots; raw local reports are ignored by Git. Scorer tests deliberately corrupt
-quotes/IDs, expected results and runner behavior to verify failures are detected.
-See the [Agent evaluation protocol](evals/AGENT_EVALUATION.md) for commands, metric
-definitions, limitations and the future live/human review procedure.
-
-### Content deletion and bounded live acceptance · 2026-10-22
-
-Visitors can explicitly delete a selected study plan and all its self-test answers
-and feedback. Current content records are replaced by minimal tombstones; quota,
-cost and replay-prevention records remain, so deletion does not reset allowances.
-Live operations are protected from deletion until their lease expires. This does
-not erase provider submissions or historical database backups.
-
-A real-model **local-service** smoke using five fictional DEMO101 documents passed
-**13/13 functional checks** across RAG, refusal, plan generation, evidence quotes,
-self-test feedback, explicitly confirmed replanning, progress persistence and
-deletion. Fourteen API calls took **33.149 s total**, with estimated cost
-**$0.00243270**, below the approved $0.05 cap; zero uncertain charges. These are
-not model accuracy metrics or production browser end-to-end results. Human review
-coverage is zero. See [deletion boundaries and acceptance protocol](docs/STUDY_DELETION.md).
-
-### Human-review error analysis · 2026-10-22
-
-The offline review workflow now produces per-category human correctness/support
-with explicit numerators and denominators, paired-engine comparisons, proxy/human
-disagreement counts and a local investigation queue. Navigation tracks complete
-questions as well as individual responses. The prepared packet reuses 30
-historical fictional development questions / 90 responses; holdout is untouched.
-No new model calls or human labels are created: unreviewed quality rates remain
-null. Historical cached answers do not measure the current deployed implementation.
-See the [practical review guide](docs/RAG_QUALITY_WORKFLOW.md) and
-[first-session instructions in Chinese](docs/HUMAN_REVIEW_ZH.md).
-
-### Agent post-execution gates · 2026-10-22
-
-Plan/feedback drafts now carry independent mechanical verification reports.
-Confirmation rechecks current course evidence and state/version constraints;
-failed checks cannot activate a plan or apply edits. The UI requires explicit
-review acknowledgment. Goal coverage, claim support and answer correctness remain
-human-review responsibilities, not inferred from literal quotes or test pass counts.
-An isolated browser smoke verified fictional upload/queue/failure/retry/reindex,
-old-source warnings and the unchecked Agent confirmation gate with fake providers.
-New real API cost: $0. See [postchecks and acceptance boundaries](docs/AGENT_POSTCHECKS.md).
-
-## Roadmap
-
-1. Benchmark hosted File Search against hybrid retrieval, with/without reranking.
-2. Add OCR and visual/table parsing for material that lacks extractable text.
-3. Calibrate a model-graded faithfulness metric against human labels.
-4. Add authentication, tenant isolation, durable cloud storage, and observability.
+- [系统设计与取舍](docs/architecture.md)
+- [RAG 加固](docs/RAG_HARDENING.md)
+- [RAG 评测协议](evals/README.md)
+- [最新评测结果与失败分析](docs/EVALUATION_RESULTS_ZH.md)
+- [AI 辅助核对方法与边界](docs/AI_REVIEW_ZH.md)
+- [人工审核操作指南](docs/HUMAN_REVIEW_ZH.md)
+- [RAG 错误分析流程](docs/RAG_QUALITY_WORKFLOW.md)
+- [Agent 评测协议](evals/AGENT_EVALUATION.md)
