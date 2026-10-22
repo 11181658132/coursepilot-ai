@@ -48,9 +48,11 @@ class FakeClient:
         else:
             first = payload["passages"][0]
             source_id = "S99" if self.invalid_id else first["source_id"]
-            quote = "this quote was invented" if self.invalid_quote else first["text"][:80]
+            quote_id = first["quote_options"][0]["quote_id"]
+            citation = ({"source_id": source_id, "quote": "this quote was invented"}
+                        if self.invalid_quote else {"source_id": source_id, "quote_id": quote_id})
             result = {"answer": f"Database transactions preserve consistency. [{source_id}]",
-                      "citations": [{"source_id": source_id, "quote": quote}]}
+                      "citations": [citation]}
         return SimpleNamespace(output_text=json.dumps(result),
                                usage=SimpleNamespace(input_tokens=100, output_tokens=20))
 
