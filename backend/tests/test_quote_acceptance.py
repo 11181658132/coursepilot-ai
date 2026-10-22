@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.benchmark import DATASET, corpus_hash, validate_dataset
+from app.config import PROJECT_ROOT
 from app.quote_acceptance import VARIANTS, main, selected_case
 
 
@@ -49,7 +50,7 @@ class QuoteAcceptanceTests(unittest.TestCase):
             selected_case(self.root)
 
     def test_dry_run_never_constructs_sdk_or_creates_output(self):
-        output = Path("evals/reports/synthetic-quote-dry-run-test")
+        output = PROJECT_ROOT / "evals/reports/synthetic-quote-dry-run-test"
         with patch("sys.argv", ["quote_acceptance", "--directory", str(self.root),
                                 "--output", str(output)]), patch(
                 "app.quote_acceptance.OpenAI") as sdk, patch(
@@ -60,7 +61,8 @@ class QuoteAcceptanceTests(unittest.TestCase):
 
     def test_rejects_outside_output_and_excess_budget_before_any_provider(self):
         for arguments in (["--output", str(self.root / "outside")],
-                          ["--output", "evals/reports/unused", "--budget-usd", "0.06"]):
+                          ["--output", str(PROJECT_ROOT / "evals/reports/unused"),
+                           "--budget-usd", "0.06"]):
             with patch("sys.argv", ["quote_acceptance", *arguments]), patch(
                     "app.quote_acceptance.OpenAI") as sdk, patch(
                         "sys.stderr", new_callable=io.StringIO):
