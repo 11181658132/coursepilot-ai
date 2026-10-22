@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GET, PATCH, POST } from "./route";
+import { DELETE, GET, PATCH, POST } from "./route";
 
 const url = "https://demo.example/api/demo/study-plans";
 const context = (path: string[] = []) => ({ params: Promise.resolve({ path }) });
@@ -23,6 +23,16 @@ function mutation(cookie: string, value: object = body, target = url, method = "
 }
 
 describe("public Agent gateway", () => {
+  it("binds deletion to the signed visitor and path ID", async () => {
+    const cookie = await session(); fetcher.mockClear();
+    const planId = `v1${"a".repeat(64)}_${"b".repeat(32)}`;
+    const response = await DELETE(mutation(cookie, { confirmed: true, version: 2, plan_id: "forged" }, `${url}/${planId}`, "DELETE"), context([planId]));
+    expect(response.status).toBe(200);
+    const envelope = JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(envelope.action).toBe("delete");
+    expect(envelope.data).toEqual({ confirmed: true, version: 2, plan_id: planId });
+    expect((await DELETE(mutation("", {}, `${url}/${planId}`, "DELETE"), context([planId]))).status).toBe(401);
+  });
   it("signs recovery as a separate non-generation operation with the path-owned ID", async () => {
     const cookie = await session(); fetcher.mockClear();
     const planId = `v1${"a".repeat(64)}_${"b".repeat(32)}`;

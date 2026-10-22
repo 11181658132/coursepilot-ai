@@ -517,8 +517,8 @@ Generation and feedback share existing public request/cost quotas; no new databa
 migration is required. Source quotes are validated, but semantic scoring quality
 is **not established by quote matching**. The UI discloses answer persistence and
 provider transmission, avoids numeric grades and labels uncertainty explicitly.
-Implementation tests use scripted responses; new actual API spend is **$0**, and
-live feedback quality is not yet measured. See [feedback architecture and safety
+Implementation tests use scripted responses; live feedback quality is not yet
+measured. A later bounded functional smoke is documented below. See [feedback architecture and safety
 boundaries](docs/STUDY_FEEDBACK.md).
 
 ### Scripted Agent contract evaluation · 2026-10-21
@@ -538,6 +538,22 @@ snapshots; raw local reports are ignored by Git. Scorer tests deliberately corru
 quotes/IDs, expected results and runner behavior to verify failures are detected.
 See the [Agent evaluation protocol](evals/AGENT_EVALUATION.md) for commands, metric
 definitions, limitations and the future live/human review procedure.
+
+### Content deletion and bounded live acceptance · 2026-10-22
+
+Visitors can explicitly delete a selected study plan and all its self-test answers
+and feedback. Current content records are replaced by minimal tombstones; quota,
+cost and replay-prevention records remain, so deletion does not reset allowances.
+Live operations are protected from deletion until their lease expires. This does
+not erase provider submissions or historical database backups.
+
+A real-model **local-service** smoke using five fictional DEMO101 documents passed
+**13/13 functional checks** across RAG, refusal, plan generation, evidence quotes,
+self-test feedback, explicitly confirmed replanning, progress persistence and
+deletion. Fourteen API calls took **33.149 s total**, with estimated cost
+**$0.00243270**, below the approved $0.05 cap; zero uncertain charges. These are
+not model accuracy metrics or production browser end-to-end results. Human review
+coverage is zero. See [deletion boundaries and acceptance protocol](docs/STUDY_DELETION.md).
 
 ## Roadmap
 

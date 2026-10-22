@@ -50,6 +50,8 @@ async function handle(request: Request, context: Context) {
       action = "draft"; data = await readJson(request);
     } else if (path.length === 1 && idPattern.test(path[0]) && request.method === "GET") {
       action = "get"; data = { plan_id: path[0] };
+    } else if (path.length === 1 && idPattern.test(path[0]) && request.method === "DELETE") {
+      action = "delete"; data = { ...await readJson(request), plan_id: path[0] };
     } else if (path.length === 2 && idPattern.test(path[0]) && ["confirm", "recover"].includes(path[1]) && request.method === "POST") {
       action = path[1]; data = { ...await readJson(request), plan_id: path[0] };
     } else if (path.length === 3 && idPattern.test(path[0]) && path[1] === "tasks" && /^[a-f0-9]{32}$/.test(path[2]) && request.method === "PATCH") {
@@ -86,3 +88,4 @@ async function handle(request: Request, context: Context) {
 export const GET = handle;
 export const POST = handle;
 export const PATCH = handle;
+export const DELETE = handle;

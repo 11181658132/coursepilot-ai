@@ -18,11 +18,13 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [ready, setReady] = useState(false);
   const call = <T,>(path: string, init?: RequestInit) => studyRequest<T>(apiUrl, path, init, demoMode);
   const pending = useRef<{ key: string; id: string } | null>(null);
   const listVersion = useRef(0);
   const selected = plans.find(plan => plan.id === selectedId);
+  useEffect(() => { setDeleteConfirmed(false); }, [selectedId, selected?.version]);
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 
   useEffect(() => { if (!course && courses.length) setCourse(courses[0].course); }, [courses, course]);
@@ -60,6 +62,20 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
     setBusy(true); setError("");
     try { receive(await call<StudyPlan>(path, { method, body: body ? JSON.stringify(body) : undefined })); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "操作失败"); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteSelected() {
+    if (!selected || !deleteConfirmed || busy) return;
+    setBusy(true); setError("");
+    try {
+      await call<{ deleted: boolean }>(`/${selected.id}`, { method: "DELETE",
+        body: JSON.stringify({ confirmed: true, version: selected.version }) });
+      ++listVersion.current;
+      const remaining = plans.filter(item => item.id !== selected.id);
+      setPlans(remaining); setSelectedId(remaining[0]?.id ?? ""); pending.current = null;
+      setNotice("该计划及其自测内容已删除，无法从应用恢复。费用、限流和防重复执行记录仍保留；删除不返还额度。");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "删除未确认，请刷新核对。"); }
     finally { setBusy(false); }
   }
 
@@ -109,6 +125,12 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
             }}>填回原目标，准备新草稿</button></div>}
             {selected.status === "failed" && <div className="error">本次未生成有效计划（{selected.error_code}）。没有启用任何任务。请检查索引、API 配置或费用限制；再次生成将使用新请求并可能计费。</div>}
           </div>
+          <details className="notice"><summary>删除这份计划及自测内容</summary>
+            <p>删除目标、任务、进度、自测答案与反馈，无法从应用恢复。限流、费用和防重复执行记录保留；不会撤回已发送给模型的内容。数据库备份可能仍保留历史版本。</p>
+            <label className="taskToggle"><input type="checkbox" checked={deleteConfirmed} disabled={busy} onChange={event => setDeleteConfirmed(event.target.checked)} />我确认删除这份计划及全部自测内容</label>
+            <button type="button" disabled={busy || !deleteConfirmed || (selected.status === "running" && !selected.recovery_available) || (selected.feedback ?? []).some(item => item.status === "running" && !item.recovery_available)} onClick={deleteSelected}>确认删除（不调用模型）</button>
+            <p>仍在执行的任务不能删除，请等待结束或检查点过期。</p>
+          </details>
           <details className="studyTrace"><summary>查看工具执行记录（{selected.trace.length} 步）</summary><ol>{selected.trace.map(step => <li key={step.step}>{step.tool} · {step.status}{step.evidence_count !== undefined ? ` · ${step.evidence_count} 条证据` : ""}</li>)}</ol></details>
           {selected.tasks.map(task => <article className={`studyTask ${task.done ? "done" : ""}`} key={task.id}>
             <h3>第 {task.day} 天 · {task.title}</h3><p>{task.minutes} 分钟 · {task.study_goal}</p>

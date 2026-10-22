@@ -96,6 +96,27 @@ class PublicPostgresIntegrationTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             self.assertEqual(sum(pool.map(reserve, [(self.one, first), (self.two, second)])), 1)
 
+    def test_deletion_persists_without_refunding_cost_or_allowing_request_replay(self):
+        run, _ = self.one.start(self.request)
+        self.one.reserve(run["id"], 0.02, 0.05, 0.10)
+        self.one.finish(run["id"], "failed", {"request": run["request"]})
+        with self.assertRaises(KeyError):
+            self.two.delete(run["id"], 1)
+        self.one.delete(run["id"], 1)
+        reopened = IntegrationStore(DSN, "a" * 64, "1" * 64, self.schema)
+        with self.assertRaises(KeyError):
+            reopened.get(run["id"])
+        self.assertEqual(reopened.list("DEMO101"), [])
+        with self.assertRaises(StudyConflict):
+            reopened.start(self.request)
+        with reopened.connect() as db:
+            self.assertEqual(
+                db.execute("SELECT SUM(amount) FROM study_charges").fetchone()[0], 0.02
+            )
+        reopened.start(self.request.model_copy(update={"request_id": uuid.uuid4()}))
+        with self.assertRaises(StudyBudgetExceeded):
+            reopened.start(self.request.model_copy(update={"request_id": uuid.uuid4()}))
+
     def test_recovery_survives_new_connection_fences_worker_and_keeps_quota(self):
         run, _ = self.one.start(self.request)
         payload = self.one.payload(run)

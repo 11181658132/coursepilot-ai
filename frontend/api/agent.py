@@ -68,7 +68,8 @@ def handle(body, store_factory=PublicStudyStore, base_factory=demo_base):
     elif action == "list":
         if data != {"course": "DEMO101"}:
             raise ValueError("Public course only")
-    elif action not in {"get", "confirm", "recover", "task", "feedback", "confirm_feedback"}:
+    elif action not in {"get", "confirm", "recover", "delete", "task", "feedback",
+                        "confirm_feedback"}:
         raise ValueError("Action not allowed")
     store = store_factory(dsn, body["tenant"], body["quota_key"])
     if action == "list":
@@ -77,12 +78,13 @@ def handle(body, store_factory=PublicStudyStore, base_factory=demo_base):
         if set(data) != {"plan_id"}:
             raise ValueError("Invalid get")
         return store.get(data["plan_id"])
-    if action in {"confirm", "recover"}:
+    if action in {"confirm", "recover", "delete"}:
         if set(data) != {"plan_id", "confirmed", "version"}:
             raise ValueError("Invalid confirmation")
         confirmation = Confirmation.model_validate({k: v for k, v in data.items()
                                                    if k != "plan_id"})
-        operation = store.recover if action == "recover" else store.confirm
+        operation = {"recover": store.recover, "delete": store.delete,
+                     "confirm": store.confirm}[action]
         return operation(data["plan_id"], confirmation.version)
     if action == "task":
         if set(data) != {"plan_id", "task_id", "done", "version"}:

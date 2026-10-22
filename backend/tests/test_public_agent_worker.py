@@ -94,6 +94,12 @@ class PublicAgentWorkerTests(unittest.TestCase):
             worker.handle(body, self.factory, self.base)
         self.assertEqual(self.store.recover.call_count, 1)
 
+    def test_deletion_does_not_load_model_or_index(self):
+        worker.handle(self.envelope("delete", {"plan_id": "plan", "confirmed": True,
+                                               "version": 2}), self.factory, self.base)
+        self.store.delete.assert_called_once_with("plan", 2)
+        self.base.assert_not_called()
+
     def test_feedback_rejects_large_answer_or_foreign_course_before_model(self):
         body = self.envelope("feedback", {"plan_id": "plan", "task_id": "task",
             "request_id": str(uuid.uuid4()), "version": 2, "answer": "x" * 401})

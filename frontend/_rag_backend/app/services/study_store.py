@@ -79,6 +79,8 @@ class StudyStore:
             row = db.execute("SELECT * FROM study_runs WHERE request_id = ?",
                              (self.request_key(request.request_id),)).fetchone()
             if row:
+                if row["status"] == "deleted":
+                    raise StudyConflict("该请求的内容已删除，旧请求不会重新执行。")
                 if row["fingerprint"] != fingerprint:
                     raise StudyConflict("请求标识已用于其他参数，请创建新请求。")
                 if row["status"] == "running":
@@ -106,6 +108,8 @@ class StudyStore:
         with self.connect() as db:
             row = db.execute("SELECT * FROM study_runs WHERE id=?", (run_id,)).fetchone()
             result = self.decode(row)
+            if result["status"] == "deleted":
+                raise KeyError("Plan not found")
             charges = db.execute("SELECT COALESCE(SUM(amount),0) AS cost, "
                                  "COALESCE(SUM(1-settled),0) AS uncertain, COUNT(*) AS calls "
                                  "FROM study_charges WHERE run_id=?",
@@ -120,7 +124,8 @@ class StudyStore:
     def list(self, course):
         clause, params = self.scope()
         with self.connect() as db:
-            rows = db.execute("SELECT id FROM study_runs WHERE course=? " + clause +
+            rows = db.execute("SELECT id FROM study_runs WHERE course=? AND status<>'deleted' "
+                              + clause +
                               " ORDER BY created_at DESC LIMIT 20", (course, *params)).fetchall()
         return [self.get(row["id"]) for row in rows]
 
@@ -207,6 +212,37 @@ class StudyStore:
             if expired and all(state["id"] != run_id for state in expired):
                 db.execute("UPDATE study_runs SET version=version+1 WHERE id=?", (run_id,))
         return self.get(run_id)
+
+    def delete(self, run_id, version):
+        """Erase plan/answer payloads, retaining only dedupe/cost/quota tombstones."""
+        self.check_id(run_id)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            parent = self.decode(db.execute("SELECT * FROM study_runs WHERE id=?",
+                                            (run_id,)).fetchone())
+            if parent["status"] == "deleted":
+                return {"deleted": True}
+            if parent.get("kind") == "feedback":
+                raise KeyError("Plan not found")
+            if parent["version"] != version:
+                raise StudyConflict("计划已变化，请刷新后重新确认删除。")
+            states = [parent]
+            for identifier in parent.get("feedback_ids", []):
+                self.check_id(identifier)
+                child = self.decode(db.execute("SELECT * FROM study_runs WHERE id=?",
+                                               (identifier,)).fetchone())
+                if child.get("parent_id") != run_id or child.get("kind") != "feedback":
+                    raise KeyError("Feedback not found")
+                states.append(child)
+            if any(state["status"] == "running" and not self.expired(state) for state in states):
+                raise StudyConflict("运行尚未结束；请等待完成或在检查点过期后删除。")
+            tombstone = json.dumps({"kind": "deleted", "deleted_at":
+                                   datetime.now(timezone.utc).isoformat()})
+            for state in states:
+                db.execute("UPDATE study_runs SET status='deleted', course='_deleted', "
+                           "fingerprint='deleted', payload=?, version=version+1 WHERE id=?",
+                           (tombstone, state["id"]))
+        return {"deleted": True}
 
     def confirm(self, run_id, version):
         self.check_id(run_id)
