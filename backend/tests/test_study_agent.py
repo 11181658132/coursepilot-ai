@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from app.config import Settings, get_settings
-from app.main import app, get_study_agent, get_study_store
+from app.main import app, get_hybrid_base, get_study_agent, get_study_store
 from app.services.study_agent import MeteredClient, PlanRequest, StudyAgent
 from app.services.study_store import StudyBudgetExceeded, StudyConflict, StudyStore
 from fastapi.testclient import TestClient
@@ -44,6 +44,11 @@ class FakeBase:
         self.searches.append((course, material_type, query))
         return [{"filename": "source.md", "path": "DEMO101/lecture/source.md",
                  "chunk_id": "a", "text": self.text, "score": 1.0}]
+
+    def source(self, identifier):
+        if identifier == "a":
+            return {"path": "DEMO101/lecture/source.md", "text": self.text}
+        return None
 
 
 class StudyAgentTests(unittest.TestCase):
@@ -91,6 +96,47 @@ class StudyAgentTests(unittest.TestCase):
         changed = self.request.model_copy(update={"days": 2})
         with self.assertRaises(StudyConflict):
             agent.run(changed)
+
+    def test_postcheck_records_only_mechanical_success_not_semantic_accuracy(self):
+        plan = self.agent().run(self.request)
+        report = plan["verification"]
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["goal_coverage"], "requires_human_review")
+        self.assertEqual(report["semantic_support"], "requires_human_review")
+
+    def test_source_change_after_search_blocks_draft_and_clears_rejected_tasks(self):
+        agent = self.agent()
+        outputs = iter([response("list_materials", {}),
+                        response("search_knowledge", {"query": "evidence"}),
+                        response("propose_study_plan", proposal())])
+
+        def respond(**kwargs):
+            result = next(outputs)
+            if result.output[0].name == "propose_study_plan":
+                self.base.text = "The original evidence has been replaced."
+            return result
+
+        self.responses.side_effect = respond
+        plan = agent.run(self.request)
+        self.assertEqual(plan["status"], "failed")
+        self.assertEqual(plan["error_code"], "postcheck_failed")
+        self.assertEqual(plan["verification"]["status"], "blocked")
+        self.assertEqual(plan["tasks"], [])
+        with self.assertRaises(StudyConflict):
+            self.store.confirm(plan["id"], plan["version"])
+
+    def test_api_confirmation_rechecks_sources_without_new_model_call(self):
+        agent = self.agent()
+        plan = agent.run(self.request)
+        self.base.text = "Source was updated after draft generation."
+        app.dependency_overrides[get_settings] = lambda: self.config
+        app.dependency_overrides[get_study_store] = lambda: self.store
+        app.dependency_overrides[get_hybrid_base] = lambda: self.base
+        result = TestClient(app).post(f"/api/study-plans/{plan['id']}/confirm", json={
+            "confirmed": True, "version": plan["version"]})
+        self.assertEqual(result.status_code, 409, result.text)
+        self.assertEqual(self.store.get(plan["id"])["status"], "draft")
+        self.assertEqual(self.responses.call_count, 3)
 
     def test_concurrent_start_accepts_only_one_generation(self):
         def start(_):
@@ -207,6 +253,7 @@ class StudyAgentTests(unittest.TestCase):
         app.dependency_overrides[get_settings] = lambda: self.config
         app.dependency_overrides[get_study_store] = lambda: self.store
         app.dependency_overrides[get_study_agent] = lambda: agent
+        app.dependency_overrides[get_hybrid_base] = lambda: self.base
         client = TestClient(app)
         body = self.request.model_dump(mode="json")
         result = client.post("/api/study-plans", json=body)

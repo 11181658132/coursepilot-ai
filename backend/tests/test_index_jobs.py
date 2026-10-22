@@ -94,6 +94,115 @@ class IndexJobTests(unittest.TestCase):
             ids = list(pool.map(lambda _: self.store.enqueue(self.scope)["id"], range(12)))
         self.assertEqual(len(set(ids)), 1)
 
+    def test_upload_during_scan_creates_one_followup_and_never_misses_new_file(self):
+        initial = self.store.enqueue(self.scope)
+        followups = []
+
+        def after_embed():
+            self.client.after_embed = None
+            self.path.with_name("late.md").write_text("Late uploaded database evidence.")
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                followups.extend(pool.map(lambda _: self.store.enqueue(
+                    self.scope, after_running=True)["id"], range(4)))
+
+        self.client.after_embed = after_embed
+        run_once(self.config, self.factory)
+        self.assertEqual(self.store.get(initial["id"], self.scope)["report"]["uploaded"], 1)
+        self.assertEqual(len(set(followups)), 1)
+        self.assertNotEqual(followups[0], initial["id"])
+        run_once(self.config, self.factory)
+        self.assertEqual(self.store.get(followups[0], self.scope)["report"]["uploaded"], 1)
+        self.assertEqual(self.client.calls, 2)
+        self.assertEqual(len(self.factory(self.config).manifest()), 2)
+
+    def test_crash_recovery_keeps_followup_queued_without_unique_constraint_failure(self):
+        old = self.store.enqueue(self.scope)
+        with index_writer(self.config):
+            self.store.claim(self.scope)
+        followup = self.store.enqueue(self.scope, after_running=True)
+        run_once(self.config, self.factory)
+        self.assertEqual(self.store.get(old["id"], self.scope)["status"], "succeeded")
+        self.assertEqual(self.store.get(followup["id"], self.scope)["status"], "queued")
+        run_once(self.config, self.factory)
+        self.assertEqual(self.client.calls, 1)
+
+    def test_followup_cannot_bypass_scope_retry_after(self):
+        self.store.enqueue(self.scope)
+        waiting = []
+
+        def fail(**kwargs):
+            waiting.append(self.store.enqueue(self.scope, after_running=True))
+            raise TemporaryProviderError("Do not expose provider details")
+
+        self.client.embeddings.create = fail
+        before = time.time()
+        run_once(self.config, self.factory)
+        self.assertGreaterEqual(self.store.get(waiting[0]["id"], self.scope)["available_at"],
+                                before + 90)
+        self.assertFalse(run_once(self.config, self.factory))
+
+    def test_followup_stops_on_billing_problem_and_requires_manual_retry(self):
+        self.store.enqueue(self.scope)
+        waiting = []
+
+        def fail(**kwargs):
+            waiting.append(self.store.enqueue(self.scope, after_running=True))
+            raise QuotaError("Private billing details")
+
+        self.client.embeddings.create = fail
+        run_once(self.config, self.factory)
+        state = self.store.get(waiting[0]["id"], self.scope)
+        self.assertEqual(state["status"], "failed")
+        self.assertEqual(state["error_code"], "provider_quota_exhausted")
+        self.assertFalse(run_once(self.config, self.factory))
+
+    def test_successful_upload_key_can_rebuild_deleted_index_without_reembedding_unchanged(self):
+        first = self.store.enqueue(self.scope, "upload:hash", after_running=True)
+        run_once(self.config, self.factory)
+        second = self.store.enqueue(self.scope, "upload:hash", after_running=True)
+        self.assertNotEqual(first["id"], second["id"])
+        run_once(self.config, self.factory)
+        self.assertEqual(self.client.calls, 1)
+        self.factory(self.config).store.delete_document("A/lecture/week1.md")
+        third = self.store.enqueue(self.scope, "upload:hash", after_running=True)
+        run_once(self.config, self.factory)
+        self.assertEqual(self.client.calls, 2)
+        self.assertEqual(self.store.get(third["id"], self.scope)["status"], "succeeded")
+
+    def test_failed_upload_key_does_not_reset_attempts_or_silently_retry(self):
+        first = self.store.enqueue(self.scope, "upload:failed", after_running=True)
+        self.client.fail = QuotaError("private")
+        run_once(self.config, self.factory)
+        again = self.store.enqueue(self.scope, "upload:failed", after_running=True)
+        self.assertEqual(first["id"], again["id"])
+        self.assertEqual(again["status"], "failed")
+        self.assertEqual(again["attempts"], 1)
+
+    def test_v1_queue_migration_preserves_jobs_and_request_keys(self):
+        job = self.store.enqueue(self.scope, "preserved")
+        with self.store.connect() as db:
+            db.execute("DROP INDEX one_running_index_job")
+            db.execute("CREATE UNIQUE INDEX one_active_index_job ON index_jobs(scope) "
+                       "WHERE status IN ('queued','running')")
+            db.execute("PRAGMA user_version=1")
+        migrated = JobStore(self.store.path)
+        self.assertEqual(migrated.enqueue(self.scope, "preserved")["id"], job["id"])
+        with migrated.connect() as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+        with index_writer(self.config):
+            migrated.claim(self.scope)
+        followup = migrated.enqueue(self.scope, after_running=True)
+        self.assertNotEqual(followup["id"], job["id"])
+
+    def test_manual_retry_still_rejects_another_active_job(self):
+        job = self.store.enqueue(self.scope)
+        with index_writer(self.config):
+            claimed = self.store.claim(self.scope)
+        self.store.finish(claimed, error_code="synthetic")
+        self.store.enqueue(self.scope)
+        with self.assertRaises(IndexBusyError):
+            self.store.retry(job["id"], self.scope)
+
     def test_idempotency_key_returns_finished_job_even_after_new_enqueue(self):
         old = self.store.enqueue(self.scope, "once")
         run_once(self.config, self.factory)
@@ -321,6 +430,14 @@ with index_writer(config):
         self.assertEqual(observed[0]["status"], "running")
         self.assertEqual(observed[0]["phase"], "embedding")
         self.assertEqual(observed[0]["processed"], 1)
+
+    def test_real_pipeline_reports_parsing_chunking_embedding_and_atomic_commit(self):
+        phases = []
+        self.factory(self.config).sync(self.config.knowledge_base_dir,
+                                      progress=lambda done, total, phase: phases.append(phase))
+        expected = ["parsing", "chunking", "embedding", "committing"]
+        positions = [phases.index(phase) for phase in expected]
+        self.assertEqual(positions, sorted(positions))
 
 
 if __name__ == "__main__":

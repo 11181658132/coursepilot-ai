@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.services.agent_checks import require_passed
+
 
 class StudyConflict(ValueError):
     pass
@@ -244,7 +246,7 @@ class StudyStore:
                            (tombstone, state["id"]))
         return {"deleted": True}
 
-    def confirm(self, run_id, version):
+    def confirm(self, run_id, version, verifier=None):
         self.check_id(run_id)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -256,8 +258,15 @@ class StudyStore:
                 return self.get(run_id)  # Confirmation is idempotent; never recreates tasks.
             if state["status"] != "draft" or state["version"] != version:
                 raise StudyConflict("计划不可确认或版本已变化，请刷新。")
-            db.execute("UPDATE study_runs SET status='active', version=version+1 WHERE id=?",
-                       (run_id,))
+            payload = self.payload(state)
+            if payload.get("verification"):
+                require_passed(payload["verification"])
+            if verifier:
+                payload["verification"] = verifier(state)
+                require_passed(payload["verification"])
+            db.execute("UPDATE study_runs SET status='active', payload=?, "
+                       "version=version+1 WHERE id=?",
+                       (json.dumps(payload), run_id))
         return self.get(run_id)
 
     @staticmethod
@@ -313,7 +322,7 @@ class StudyStore:
                                            (feedback_id,)).fetchone())
         return state, True
 
-    def confirm_feedback(self, plan_id, feedback_id, version):
+    def confirm_feedback(self, plan_id, feedback_id, version, verifier=None):
         self.check_id(plan_id)
         self.check_id(feedback_id)
         with self.connect() as db:
@@ -332,6 +341,11 @@ class StudyStore:
                     or feedback.get("assessment", {}).get("verdict") != "needs_review"
                     or not feedback.get("adjustments")):
                 raise StudyConflict("调整草案不可应用或计划已变化，请重新获取反馈。")
+            if feedback.get("verification"):
+                require_passed(feedback["verification"])
+            if verifier:
+                feedback["verification"] = verifier(parent, feedback)
+                require_passed(feedback["verification"])
             source = next(t for t in parent["tasks"] if t["id"] == feedback["task_id"])
             eligible = {t["id"]: t for t in parent["tasks"]
                         if not t["done"] and t["day"] > source["day"]}

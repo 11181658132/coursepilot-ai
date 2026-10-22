@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "_rag_backend"))
 sys.path.insert(0, str(ROOT / "api"))
 
+from app.services.agent_checks import check_feedback, check_plan  # noqa: E402
 from app.services.public_study_store import PublicStudyStore  # noqa: E402
 from app.services.study_agent import (  # noqa: E402
     Confirmation,
@@ -85,6 +86,9 @@ def handle(body, store_factory=PublicStudyStore, base_factory=demo_base):
                                                    if k != "plan_id"})
         operation = {"recover": store.recover, "delete": store.delete,
                      "confirm": store.confirm}[action]
+        if action == "confirm":
+            return operation(data["plan_id"], confirmation.version,
+                             verifier=lambda state: check_plan(state, base_factory().source))
         return operation(data["plan_id"], confirmation.version)
     if action == "task":
         if set(data) != {"plan_id", "task_id", "done", "version"}:
@@ -97,7 +101,9 @@ def handle(body, store_factory=PublicStudyStore, base_factory=demo_base):
             raise ValueError("Invalid feedback confirmation")
         confirmation = Confirmation.model_validate({k: v for k, v in data.items()
                                                    if k not in {"plan_id", "feedback_id"}})
-        return store.confirm_feedback(data["plan_id"], data["feedback_id"], confirmation.version)
+        return store.confirm_feedback(data["plan_id"], data["feedback_id"], confirmation.version,
+            verifier=lambda parent, feedback: check_feedback(
+                parent, feedback, base_factory().source))
     if action == "feedback":
         if set(data) != {"plan_id", "task_id", "request_id", "answer", "version"}:
             raise ValueError("Invalid feedback request")

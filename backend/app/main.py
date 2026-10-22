@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,7 @@ from app.models import (
     SyncReport,
     UploadResponse,
 )
+from app.services.agent_checks import check_feedback, check_plan
 from app.services.chat_store import ChatStore
 from app.services.documents import (
     DocumentValidationError,
@@ -190,8 +192,12 @@ async def upload_document(
     course: str = Query(min_length=1, max_length=80),
     material_type: str = Query(pattern="^(lecture|tutorial|other)$"),
     filename: str = Query(min_length=1, max_length=200),
+    index_after_upload: bool = Query(default=False),
+    engine: Optional[RetrievalEngine] = None,
     config: Settings = Depends(get_settings),
 ) -> UploadResponse:
+    if index_after_upload and (engine or config.rag_engine) != "hybrid":
+        raise HTTPException(status_code=422, detail="后台上传索引仅支持 hybrid 引擎。")
     max_bytes = config.max_upload_mb * 1024 * 1024
     content_length = request.headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > max_bytes:
@@ -204,6 +210,7 @@ async def upload_document(
             filename,
             request.stream(),
             max_bytes,
+            allow_identical=True,
         )
     except DocumentValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -211,6 +218,20 @@ async def upload_document(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     relative_path = target.relative_to(config.knowledge_base_dir.resolve()).as_posix()
     saved_course = Path(relative_path).parts[0]
+    job = None
+    if index_after_upload:
+        import hashlib
+
+        from app.services.library import sha256_file
+
+        key = hashlib.sha256((relative_path + "\0" + sha256_file(target)).encode()).hexdigest()
+        try:
+            job = JobStore(queue_path(config)).enqueue(
+                queue_scope(config), "upload:" + key, after_running=True)
+        except (OSError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=503, detail=
+                "文件已保存，但入队失败；可重传相同文件或手动创建索引任务，不会覆盖原文件。"
+            ) from exc
     return UploadResponse(
         document=DocumentRecord(
             path=relative_path,
@@ -220,7 +241,9 @@ async def upload_document(
             size_bytes=size,
             status="pending",
         ),
-        message="Upload complete. Run indexing to make it searchable.",
+        message=("文件已保存并关联后台索引任务；失败任务需明确重试。" if job else
+                 "文件已保存；同名同内容上传会复用。可检查更新后手动索引。"),
+        index_job=job,
     )
 
 
@@ -441,9 +464,11 @@ def study_plan(plan_id: str, store: StudyStore = Depends(get_study_store)):
 @app.post("/api/study-plans/{plan_id}/confirm",
           dependencies=[Depends(enforce_admin_rate_limit)])
 def confirm_study_plan(plan_id: str, request: Confirmation,
-                       store: StudyStore = Depends(get_study_store)):
+                       store: StudyStore = Depends(get_study_store),
+                       base: HybridKnowledgeBase = Depends(get_hybrid_base)):
     try:
-        return store.confirm(plan_id, request.version)
+        return store.confirm(plan_id, request.version, verifier=lambda state: check_plan(
+            state, base.source))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="计划不存在。") from exc
 
@@ -490,9 +515,11 @@ def submit_study_answer(plan_id: str, task_id: str, request: QuizAnswerRequest,
 @app.post("/api/study-plans/{plan_id}/feedbacks/{feedback_id}/confirm",
           dependencies=[Depends(enforce_admin_rate_limit)])
 def confirm_study_feedback(plan_id: str, feedback_id: str, request: Confirmation,
-                           store: StudyStore = Depends(get_study_store)):
+                           store: StudyStore = Depends(get_study_store),
+                           base: HybridKnowledgeBase = Depends(get_hybrid_base)):
     try:
-        return store.confirm_feedback(plan_id, feedback_id, request.version)
+        return store.confirm_feedback(plan_id, feedback_id, request.version,
+            verifier=lambda parent, feedback: check_feedback(parent, feedback, base.source))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="计划或反馈不存在。") from exc
 
@@ -502,9 +529,23 @@ def confirm_study_feedback(plan_id: str, feedback_id: str, request: Confirmation
     response_model=list[ConversationMessage],
 )
 def conversation_messages(
-    conversation_id: str, chat_store: ChatStore = Depends(get_chat_store)
+    conversation_id: str, chat_store: ChatStore = Depends(get_chat_store),
+    base: HybridKnowledgeBase = Depends(get_hybrid_base),
 ) -> list[ConversationMessage]:
-    return chat_store.get_messages(conversation_id)
+    messages = chat_store.get_messages(conversation_id)
+    sources = {}
+    for message in messages:
+        for citation in message.citations:
+            if not citation.chunk_id:
+                continue
+            if citation.chunk_id not in sources:
+                sources[citation.chunk_id] = base.source(citation.chunk_id)
+            source = sources[citation.chunk_id]
+            citation.version_status = ("stale" if not source else
+                "unknown" if not citation.document_version else
+                "current" if citation.document_version == source.get("document_version")
+                else "stale")
+    return messages
 
 
 @app.post("/api/feedback", response_model=FeedbackResponse)

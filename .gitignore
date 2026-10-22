@@ -13,6 +13,7 @@ backend/data/*.write.lock
 backend/data/demo_store.json
 evals/reports/
 frontend/.next/
+frontend/.next-acceptance/
 frontend/node_modules/
 frontend/.env.local
 frontend/next-env.d.ts

@@ -302,13 +302,17 @@ PYTHONPATH=backend .venv/bin/python -m app.worker
 PYTHONPATH=backend .venv/bin/python -m app.worker --once
 ```
 
-Uploading alone does not start a worker or spend API credits. The UI shows persisted
+By default an upload only saves a local file. The optional **upload then index**
+checkbox explicitly authorizes sending pending library documents for embedding;
+it enqueues work but does not start a worker or call a model in the API request.
+The UI shows persisted
 progress, attempt counts, recorded cost, and sanitized failures; refreshing reloads
 the job. If it stays queued, check that the worker uses the same configuration.
 
 - Jobs use `index_jobs.sqlite3` beside `RAG_DB_PATH`: a versioned schema, WAL,
-  transactional claims, and one active job per configuration. Repeated submissions
-  coalesce while active. An optional `Idempotency-Key` replays the original job even
+  transactional claims, and one running job per configuration. Repeated submissions
+  coalesce while active; uploads arriving during a scan persist a follow-up job.
+  An optional `Idempotency-Key` on explicit job submission replays the original job even
   after completion. Successful unchanged documents are skipped on retry.
 - Worker, legacy sync API, CLI sync, and deletion share a nonblocking OS writer
   lock. Process death releases it; the next worker recovers interrupted work.
@@ -320,7 +324,15 @@ the job. If it stays queued, check that the worker uses the same configuration.
   sources are excluded from retrieval until reindexed, not silently served as current.
   This is **per-document**, not whole-library atomicity.
 - Concurrent same-name uploads use atomic create-if-absent instead of overwriting.
-  Uploads arriving during a scan may need another job after that scan completes.
+  Byte-identical retries reuse the file; different content under that name conflicts.
+  Follow-ups respect scope-wide retry backoff and stop on quota/auth/configuration
+  failures. Queue schema v2 migrates existing jobs/keys transactionally; restart
+  old workers after upgrading, since the old schema guard intentionally rejects v2.
+- Hybrid answer citations carry a document hash. Reopening local history rechecks
+  those sources and flags stale/unavailable citations without calling a model;
+  legacy replies without hashes are not falsely assigned a known version.
+
+See [upload/index lifecycle and limitations](docs/INGESTION_LIFECYCLE.md).
 
 This remains a **single-host, single-user** queue on Linux/macOS with a shared local
 disk. It is not a distributed queue, tenant authorization, PostgreSQL migration, or
@@ -554,6 +566,29 @@ deletion. Fourteen API calls took **33.149 s total**, with estimated cost
 **$0.00243270**, below the approved $0.05 cap; zero uncertain charges. These are
 not model accuracy metrics or production browser end-to-end results. Human review
 coverage is zero. See [deletion boundaries and acceptance protocol](docs/STUDY_DELETION.md).
+
+### Human-review error analysis · 2026-10-22
+
+The offline review workflow now produces per-category human correctness/support
+with explicit numerators and denominators, paired-engine comparisons, proxy/human
+disagreement counts and a local investigation queue. Navigation tracks complete
+questions as well as individual responses. The prepared packet reuses 30
+historical fictional development questions / 90 responses; holdout is untouched.
+No new model calls or human labels are created: unreviewed quality rates remain
+null. Historical cached answers do not measure the current deployed implementation.
+See the [practical review guide](docs/RAG_QUALITY_WORKFLOW.md) and
+[first-session instructions in Chinese](docs/HUMAN_REVIEW_ZH.md).
+
+### Agent post-execution gates · 2026-10-22
+
+Plan/feedback drafts now carry independent mechanical verification reports.
+Confirmation rechecks current course evidence and state/version constraints;
+failed checks cannot activate a plan or apply edits. The UI requires explicit
+review acknowledgment. Goal coverage, claim support and answer correctness remain
+human-review responsibilities, not inferred from literal quotes or test pass counts.
+An isolated browser smoke verified fictional upload/queue/failure/retry/reindex,
+old-source warnings and the unchecked Agent confirmation gate with fake providers.
+New real API cost: $0. See [postchecks and acceptance boundaries](docs/AGENT_POSTCHECKS.md).
 
 ## Roadmap
 

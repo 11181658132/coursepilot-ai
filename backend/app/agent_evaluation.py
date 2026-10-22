@@ -115,6 +115,11 @@ class FixtureRetrieval:
         return [] if not self.text else [{"chunk_id": "fixture-1", "source_id": "S1",
             "filename": "fixture.md", "path": "DEMO101/lecture/fixture.md", "text": self.text}]
 
+    def source(self, identifier):
+        if identifier == "fixture-1":
+            return {"path": "DEMO101/lecture/fixture.md", "text": self.text}
+        return None
+
 
 def grade_plan(plan, request, passages):
     """Independent mechanical grader. Quote existence is NOT semantic support."""

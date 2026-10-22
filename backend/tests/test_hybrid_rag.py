@@ -8,7 +8,7 @@ from unittest.mock import patch
 from app.config import Settings, get_settings
 from app.main import app, get_hybrid_base, get_knowledge_base
 from app.services.hybrid_kb import HybridKnowledgeBase
-from app.services.library import discover_documents
+from app.services.library import discover_documents, sha256_file
 from app.services.parsing import TextUnit, chunk_document, extract_units
 from app.services.retrieval import bm25, cosine, rank_candidates
 from fastapi.testclient import TestClient
@@ -77,6 +77,28 @@ class HybridRagTests(unittest.TestCase):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         return target
+
+    def test_answer_versions_persist_and_old_conversation_is_marked_stale_after_change(self):
+        self.base.sync(self.config.knowledge_base_dir)
+        app.dependency_overrides[get_settings] = lambda: self.config
+        app.dependency_overrides[get_hybrid_base] = lambda: self.base
+        app.dependency_overrides[get_knowledge_base] = lambda: SimpleNamespace()
+        api = TestClient(app)
+        response = api.post("/api/chat", json={"course": "A", "question": "Database consistency?",
+                                               "engine": "hybrid"})
+        self.assertEqual(response.status_code, 200, response.text)
+        citation = response.json()["citations"][0]
+        self.assertEqual(citation["document_version"], sha256_file(self.path))
+        route = f"/api/conversations/{response.json()['conversation_id']}/messages"
+        current = api.get(route).json()[-1]["citations"][0]
+        self.assertEqual(current["version_status"], "current")
+        calls = self.client.model_calls, self.client.embed_calls
+        self.path.write_text("Changed source must not silently support an old answer.")
+        stale = api.get(route).json()[-1]["citations"][0]
+        self.assertEqual(stale["version_status"], "stale")
+        self.assertEqual(stale["document_version"], citation["document_version"])
+        self.assertEqual((self.client.model_calls, self.client.embed_calls), calls)
+        self.assertEqual(api.get(f"/api/sources/{citation['chunk_id']}").status_code, 404)
 
     def test_page_local_chunking_and_stable_identity(self):
         document = discover_documents(self.config.knowledge_base_dir)[0]

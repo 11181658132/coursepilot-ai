@@ -4,7 +4,7 @@ import hashlib
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 from urllib.parse import unquote_plus
 
 from app.services.library import Document
@@ -81,14 +81,18 @@ def extract_units(path: Path) -> List[TextUnit]:
     raise ValueError(f"Unsupported parser: {suffix}")
 
 
-def chunk_document(document: Document, size: int = 1600, overlap: int = 200) -> List[Chunk]:
+def chunk_document(document: Document, size: int = 1600, overlap: int = 200,
+                   on_chunking: Optional[Callable] = None) -> List[Chunk]:
     if size < 100 or overlap < 0 or overlap >= size:
         raise ValueError("Chunk size must be >= 100 and 0 <= overlap < size")
     week_match = re.search(r"(?:week|wk)[\s_.-]*(\d{1,2})(?!\d)",
                            unquote_plus(document.relative_path), re.IGNORECASE)
     week = int(week_match[1]) if week_match else None
     chunks = []
-    for unit in extract_units(document.absolute_path):
+    units = extract_units(document.absolute_path)
+    if on_chunking:
+        on_chunking()
+    for unit in units:
         text = unit.text.replace("\x00", "").strip()
         start = 0
         while start < len(text):

@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { StudyCitation, StudyPlan, studyRequest } from "../lib/study-api";
 import TaskFeedback from "./study-feedback";
 import RequestStatus from "./request-status";
+import AgentVerification from "./agent-verification";
+import { canConfirm } from "../lib/agent-verification";
 
 type Props = { apiUrl: string; demoMode: boolean; courses: { course: string }[]; onSource: (citation: StudyCitation) => void; initialCourse?: string; initialGoal?: string; onBusyChange?: (busy: boolean) => void };
 const statusLabel = { running: "执行中 / 待核对", draft: "待你确认", active: "已确认", failed: "未生成计划", interrupted: "已中断 · 未自动重试" };
@@ -19,12 +21,14 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
+  const [contentReviewed, setContentReviewed] = useState(false);
   const [ready, setReady] = useState(false);
   const call = <T,>(path: string, init?: RequestInit) => studyRequest<T>(apiUrl, path, init, demoMode);
   const pending = useRef<{ key: string; id: string } | null>(null);
   const listVersion = useRef(0);
   const selected = plans.find(plan => plan.id === selectedId);
   useEffect(() => { setDeleteConfirmed(false); }, [selectedId, selected?.version]);
+  useEffect(() => { setContentReviewed(false); }, [selectedId, selected?.version]);
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 
   useEffect(() => { if (!course && courses.length) setCourse(courses[0].course); }, [courses, course]);
@@ -114,7 +118,9 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
           <div className="studySummary"><h3>{selected.title ?? "Agent 运行"}</h3><p>{statusLabel[selected.status]} · 计划生成估算 / 预留 ${selected.accounted_cost_usd.toFixed(6)} · 未结算调用 {selected.uncertain_calls}</p>
             {(selected.feedback?.length ?? 0) > 0 && <p>自测反馈合计估算 / 预留 ${(selected.feedback ?? []).reduce((sum, item) => sum + item.accounted_cost_usd, 0).toFixed(6)} · 未结算调用 {(selected.feedback ?? []).reduce((sum, item) => sum + item.uncertain_calls, 0)}</p>}
             {selected.status === "draft" && <><p>请先检查学习任务和引用。引用原文匹配不等于所有结论都正确，仍需你审核。</p>
-              <button disabled={busy} onClick={() => mutate(`/${selected.id}/confirm`, "POST", { confirmed: true, version: selected.version })}>确认并启用这份计划</button></>}
+              <AgentVerification report={selected.verification} />
+              <label className="taskToggle"><input type="checkbox" checked={contentReviewed} disabled={busy} onChange={event => setContentReviewed(event.target.checked)} />我已核对学习目标覆盖与引用内容，接受这份草案</label>
+              <button disabled={busy || !canConfirm(selected.verification, contentReviewed)} onClick={() => mutate(`/${selected.id}/confirm`, "POST", { confirmed: true, version: selected.version })}>确认并启用这份计划</button></>}
             {selected.checkpoint_at && <p>最近检查点：{new Date(selected.checkpoint_at).toLocaleString()}</p>}
             {selected.status === "running" && <p>运行尚未完成，请先刷新状态。每次检查点有效期为 3 分钟；过期后可核对并结束中断记录，不会自动重新调用模型。</p>}
             {selected.recovery_available && <div className="notice"><p>计划或自测反馈的检查点已过期，可能发生中断。核对操作只会把过期运行标记为中断，保留工具步骤、学习进度和未结算费用预留；不返还体验次数。</p><button disabled={busy} onClick={() => mutate(`/${selected.id}/recover`, "POST", { confirmed: true, version: selected.version })}>核对并结束过期运行（不调用模型）</button></div>}
@@ -124,6 +130,7 @@ export default function StudyAgent({ apiUrl, demoMode, courses, onSource, initia
               setError(""); setNotice("已填回原目标；如需新请求，请检查后点击「生成新草稿」。这一步没有调用模型。");
             }}>填回原目标，准备新草稿</button></div>}
             {selected.status === "failed" && <div className="error">本次未生成有效计划（{selected.error_code}）。没有启用任何任务。请检查索引、API 配置或费用限制；再次生成将使用新请求并可能计费。</div>}
+            {selected.status === "failed" && selected.verification && <AgentVerification report={selected.verification} />}
           </div>
           <details className="notice"><summary>删除这份计划及自测内容</summary>
             <p>删除目标、任务、进度、自测答案与反馈，无法从应用恢复。限流、费用和防重复执行记录保留；不会撤回已发送给模型的内容。数据库备份可能仍保留历史版本。</p>

@@ -24,11 +24,6 @@ class DocumentRecord(BaseModel):
     status: Literal["indexed", "pending", "missing"]
 
 
-class UploadResponse(BaseModel):
-    document: DocumentRecord
-    message: str
-
-
 class DeleteDocumentRequest(BaseModel):
     path: str = Field(min_length=3, max_length=500)
 
@@ -79,6 +74,12 @@ class IndexJob(BaseModel):
     estimated_cost_usd: float = 0
 
 
+class UploadResponse(BaseModel):
+    document: DocumentRecord
+    message: str
+    index_job: Optional[IndexJob] = None
+
+
 class ChatRequest(BaseModel):
     course: str = Field(min_length=1, max_length=80)
     material_type: MaterialType = "all"
@@ -94,6 +95,8 @@ class SourceLocation(BaseModel):
     page: Optional[int] = None
     locator_type: Optional[Literal["page", "slide", "section"]] = None
     week: Optional[int] = None
+    document_version: Optional[str] = None
+    version_status: Optional[Literal["current", "stale", "unknown"]] = None
 
 
 class Citation(SourceLocation):

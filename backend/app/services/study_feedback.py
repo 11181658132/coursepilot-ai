@@ -9,6 +9,7 @@ from openai import OpenAI
 from pydantic import Field
 
 from app.models import Evidence
+from app.services.agent_checks import check_feedback
 from app.services.hybrid_kb import HybridKnowledgeBase, validate_answer
 from app.services.study_agent import (
     AgentLimit,
@@ -65,6 +66,8 @@ class FeedbackAgent:
             pass  # Recovery/lease fencing wins over any late model result.
         except Exception as exc:
             payload["error_code"] = ("budget_limit" if isinstance(exc, StudyBudgetExceeded)
+                                     else "postcheck_failed" if isinstance(exc, AgentLimit)
+                                     and str(exc) == "postcheck_failed"
                                      else "feedback_failed")
             # No raw provider exception bodies or rejected answers in logs/telemetry.
             payload.pop("assessment", None)
@@ -131,7 +134,8 @@ class FeedbackAgent:
                 for row in rows[:4]:
                     evidence.append(Evidence(**{k: v for k, v in row.items()
                                                 if k not in {"embedding", "sha256", "source_id"}},
-                                             source_id=f"S{len(evidence) + 1}"))
+                                             source_id=f"S{len(evidence) + 1}",
+                                             document_version=row.get("sha256")))
                     evidence[-1].text = evidence[-1].text[:2000]
                 event.update(status="succeeded", evidence_count=len(evidence))
                 self.store.checkpoint(run_id, payload)
@@ -139,7 +143,7 @@ class FeedbackAgent:
                     payload["assessment"] = {"verdict": "uncertain", "explanation":
                         "没有检索到足够的课程证据，无法可靠评估本次答案。", "weaknesses": [],
                         "citations": []}
-                    return self.store.finish(run_id, "draft", payload)
+                    return self.checked_finish(run_id, payload, base)
                 history.extend(item.model_dump() if hasattr(item, "model_dump") else vars(item)
                                for item in response.output)
                 history.append({"type": "function_call_output", "call_id": call.call_id,
@@ -171,8 +175,15 @@ class FeedbackAgent:
                         "citations": self.citations(edit.study_goal + "\n" + edit.quiz_answer,
                                                     [edit.citation], evidence)})
                 event["status"] = "succeeded"
-                return self.store.finish(run_id, "draft", payload)
+                return self.checked_finish(run_id, payload, base)
         raise AgentLimit("step_limit")
+
+    def checked_finish(self, run_id, payload, base):
+        current = self.store.get(payload["parent_id"])
+        payload["verification"] = check_feedback(current, payload, base.source)
+        if payload["verification"]["status"] != "passed":
+            raise AgentLimit("postcheck_failed")
+        return self.store.finish(run_id, "draft", payload)
 
     @staticmethod
     def citations(answer, quotes, evidence):

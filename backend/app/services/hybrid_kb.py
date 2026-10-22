@@ -150,7 +150,9 @@ class HybridKnowledgeBase:
                 if not dry_run:
                     notify(position, len(documents), "parsing")
                     chunks = chunk_document(document, self.config.rag_chunk_chars,
-                                            self.config.rag_chunk_overlap)
+                                            self.config.rag_chunk_overlap,
+                                            on_chunking=lambda position=position: notify(
+                                                position, len(documents), "chunking"))
                     if sha256_file(document.absolute_path) != document.sha256:
                         raise ValueError("Document changed during parsing")
                     # UTF-8 byte count is a conservative upper bound on BPE tokens.
@@ -233,7 +235,7 @@ class HybridKnowledgeBase:
         source = self.store.source(chunk_id, self.signature)
         if not source or not self._is_current(source):
             return None
-        source.pop("sha256")
+        source["document_version"] = source.pop("sha256")
         return source
 
     def _current_rows(self, rows: List[dict]) -> List[dict]:
@@ -362,7 +364,8 @@ class HybridKnowledgeBase:
                                             stage="retrieval" if exc.reason == "source_changed"
                                             else "rerank")
         evidence = [Evidence(**{key: value for key, value in row.items()
-                               if key not in {"embedding", "sha256"}}, source_id=f"S{i}")
+                               if key not in {"embedding", "sha256"}}, source_id=f"S{i}",
+                             document_version=row.get("sha256"))
                     for i, row in enumerate(rows, 1)]
         citations = []
         answer = "资料中没有足够证据回答这个问题。"

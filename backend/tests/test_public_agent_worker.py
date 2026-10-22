@@ -60,7 +60,8 @@ class PublicAgentWorkerTests(unittest.TestCase):
     def test_confirmation_and_progress_do_not_load_model_or_index(self):
         body = self.envelope("confirm", {"plan_id": "plan", "confirmed": True, "version": 1})
         worker.handle(body, self.factory, self.base)
-        self.store.confirm.assert_called_once_with("plan", 1)
+        self.assertEqual(self.store.confirm.call_args.args, ("plan", 1))
+        self.assertTrue(callable(self.store.confirm.call_args.kwargs["verifier"]))
         body = self.envelope("task", {"plan_id": "plan", "task_id": "task", "done": True,
                                        "version": 2})
         worker.handle(body, self.factory, self.base)
@@ -81,7 +82,8 @@ class PublicAgentWorkerTests(unittest.TestCase):
         body = self.envelope("confirm_feedback", {"plan_id": "plan", "feedback_id": "feedback",
                                                    "confirmed": True, "version": 3})
         worker.handle(body, self.factory, self.base)
-        self.store.confirm_feedback.assert_called_once_with("plan", "feedback", 3)
+        self.assertEqual(self.store.confirm_feedback.call_args.args, ("plan", "feedback", 3))
+        self.assertTrue(callable(self.store.confirm_feedback.call_args.kwargs["verifier"]))
         self.base.assert_not_called()
 
     def test_recovery_does_not_load_model_or_index_and_requires_confirmation(self):

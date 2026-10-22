@@ -2,6 +2,8 @@
 
 import { FormEvent, useRef, useState } from "react";
 import { StudyCitation, StudyPlan, StudyTask, studyRequest } from "../lib/study-api";
+import AgentVerification from "./agent-verification";
+import { canConfirm } from "../lib/agent-verification";
 
 type Props = { plan: StudyPlan; task: StudyTask; apiUrl: string; demoMode: boolean; busy: boolean;
   onPlan: (plan: StudyPlan) => void; onBusy: (busy: boolean) => void; onError: (error: string) => void;
@@ -10,6 +12,7 @@ type Props = { plan: StudyPlan; task: StudyTask; apiUrl: string; demoMode: boole
 export default function TaskFeedback({ plan, task, apiUrl, demoMode, busy, onPlan, onBusy, onError, onSource }: Props) {
   const [answer, setAnswer] = useState("");
   const [prepared, setPrepared] = useState(false);
+  const [reviewedProposal, setReviewedProposal] = useState("");
   const pending = useRef<{ key: string; id: string; version: number } | null>(null);
   const entries = (plan.feedback ?? []).filter(item => item.task_id === task.id);
   async function submit(event: FormEvent) {
@@ -53,6 +56,7 @@ export default function TaskFeedback({ plan, task, apiUrl, demoMode, busy, onPla
         pending.current = null; setAnswer(entry.request.answer); setPrepared(true);
       }}>填回本次答案（不调用模型）</button></div>}
       {entry.status === "failed" && <p className="error">本次反馈未完成（{entry.error_code}），未修改原计划。再次提交可能计费。</p>}
+      {entry.verification && <AgentVerification report={entry.verification} />}
       {entry.assessment && <>
         <strong className={`verdict ${entry.assessment.verdict}`}>{({ mostly_correct: "AI 建议：基本理解", needs_review: "AI 建议：值得复习", uncertain: "暂时无法可靠判断" })[entry.assessment.verdict]}</strong>
         <p>{entry.assessment.explanation}</p>
@@ -72,7 +76,8 @@ export default function TaskFeedback({ plan, task, apiUrl, demoMode, busy, onPla
         })}
         {entry.status === "active" ? <p className="notice">你已确认，这份调整已保存。</p> : entry.base_version !== plan.version ? <p className="notice">计划或进度已变化，这份旧草案不可应用。需要时重新提交答案获取建议。</p> : <>
           <p>不确认就保留原计划。只改未完成的后续任务，不改每天时长、日期顺序或完成状态。</p>
-          <button type="button" disabled={busy || entry.status !== "draft"} onClick={() => confirm(entry.id)}>确认应用这份调整（不调用模型）</button>
+          <label className="taskToggle"><input type="checkbox" checked={reviewedProposal === `${entry.id}:${plan.version}`} disabled={busy} onChange={event => setReviewedProposal(event.target.checked ? `${entry.id}:${plan.version}` : "")} />我已核对薄弱点、目标覆盖和调整依据</label>
+          <button type="button" disabled={busy || entry.status !== "draft" || !canConfirm(entry.verification, reviewedProposal === `${entry.id}:${plan.version}`)} onClick={() => confirm(entry.id)}>确认应用这份调整（不调用模型）</button>
         </>}
       </section>}
     </div>)}

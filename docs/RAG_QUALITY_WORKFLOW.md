@@ -26,6 +26,9 @@ Outputs:
 - `review.html`: standalone local human-review interface. It includes question,
   answer, citations, retrieved text, draft references and all five fictional sources.
 - `manifest.json`: exact mapping to the original engine/case/response hashes.
+- `review-analysis.json` / `review-analysis.md`: human coverage and explicitly
+  denominated correctness/support metrics. A fresh packet has zero human reviews,
+  null rates and an empty repair queue, not assumed passes.
 
 No engine name, automatic grade, score, latency or cost is displayed in the review
 interface. Engine order is deterministically shuffled per question. This is
@@ -61,6 +64,18 @@ upstream, none or uncertain. Stages are human diagnoses, separate from automatic
 failure tags. Where possible, have a second reviewer independently assess a sample
 and resolve disagreements before calling the labels a reference set.
 
+### Practical first session
+
+Start with 5–10 questions, reviewing **all three anonymous responses per question**
+before comparing engines. Across sessions cover ordinary concepts, multi-source
+reasoning, absent facts and adversarial/wrong-premise cases. The complete packet
+contains 30 development questions / 90 responses; the 20 holdout answers remain
+excluded. Use the answer jump menu and “下一条未完成审核” to navigate. Progress
+shows both completed responses and questions whose available responses are all
+reviewed; this UI count is not a paired-quality metric when an engine is blocked.
+Do not check the human attestation or fill grades unless you personally checked
+the source. Unknown remains ungraded. A failed grade cannot select “未发现问题”.
+
 **Export the JSONL before closing or refreshing.** The page makes no network calls
 and does not store grades in browser storage. The export includes completed rows
 only; restore the exported file to continue. This avoids leaving review content
@@ -83,6 +98,23 @@ JSONL compatible with the existing `apply_reviews` scorer, plus
 averages use **only the intersection of reviewed case IDs across all three
 engines**; if there are no paired reviewed cases, both metrics stay null. Coverage
 and denominators are explicit. These are not held-out generalization metrics.
+
+The new `review-analysis.json` additionally includes per-category correctness and
+support (numerator, denominator, rate), blocked/eligible/reviewed counts, the
+intersection-only paired scores, primary human problem stages and a confusion
+table comparing the proxy pass with human correctness **and** support. This is
+descriptive agreement on selected reviewed outputs, not independent validation
+of the proxy grader. A local repair queue retains response hashes, reviewer notes
+and suggested investigations, not automatically proven root causes. Reference
+disputes appear even if the reviewer accepts the answer. Noisy draft-reference
+labels must be resolved before treating them as gold.
+
+`review-analysis.md` gives a compact dashboard and investigation counts without
+copying answers, quotes, reviewer names or notes. All artifacts remain ignored;
+review them deliberately before sharing even aggregate results. These are cached
+**historical** model responses, not evidence of current deployed-code quality.
+The importer rejects extra fields, overlong labels, invalid stages and negative
+grades claiming no issue. No labels or historical reports are overwritten.
 
 ## 4. Decide the next change from failure evidence
 

@@ -11,6 +11,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import Evidence
+from app.services.agent_checks import check_plan
 from app.services.hybrid_kb import HybridKnowledgeBase, validate_answer
 from app.services.study_store import StudyBudgetExceeded, StudyConflict, StudyStore
 
@@ -136,9 +137,11 @@ class StudyAgent:
             if isinstance(exc, AgentLimit) and str(exc) in {
                 "no_indexed_course", "response_incomplete", "unverified_citation",
                 "days_mismatch", "missing_evidence", "step_limit", "time_limit",
+                "postcheck_failed",
             }:
                 code = str(exc)
             payload["error_code"] = code
+            payload["tasks"] = []
             try:
                 return self.store.finish(run_id, "failed", payload)
             except StudyConflict:
@@ -211,7 +214,8 @@ class StudyAgent:
                     if key not in sources:
                         source = Evidence(**{k: v for k, v in row.items()
                                              if k not in {"embedding", "sha256", "source_id"}},
-                                          source_id=f"S{len(evidence) + 1}")
+                                          source_id=f"S{len(evidence) + 1}",
+                                          document_version=row.get("sha256"))
                         source.text = source.text[:2000]
                         evidence.append(source)
                         sources[key] = source
@@ -233,8 +237,12 @@ class StudyAgent:
                                   "id": uuid.uuid4().hex, "done": False,
                                   "minutes": request.daily_minutes,
                                   "citations": [c.model_dump() for c in citations]})
-                event["status"] = "succeeded"
                 payload.update(title=args.title, tasks=sorted(tasks, key=lambda task: task["day"]))
+                payload["verification"] = check_plan(payload, base.source)
+                if payload["verification"]["status"] != "passed":
+                    payload["tasks"] = []
+                    raise AgentLimit("postcheck_failed")
+                event["status"] = "succeeded"
                 return self.store.finish(run_id, "draft", payload)
             event["status"] = "succeeded"
             self.store.checkpoint(run_id, payload)

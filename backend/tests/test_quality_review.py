@@ -101,6 +101,85 @@ class QualityReviewTests(unittest.TestCase):
         self.assertIsNone(diagnosis["semantic_correctness"])
         self.assertIsNone(diagnosis["semantic_faithfulness"])
 
+    def test_initial_analysis_has_null_human_metrics_and_no_invented_repair_items(self):
+        prepare(self.suite, self.packet_dir)
+        analysis = json.loads((self.packet_dir / "review-analysis.json").read_text())
+        self.assertEqual(analysis["status"], "awaiting_human_reviews")
+        self.assertEqual(analysis["reviewed_outputs"], 0)
+        self.assertEqual(analysis["eligible_outputs"], 3)
+        self.assertEqual(analysis["repair_queue"], [])
+        for values in analysis["variants"].values():
+            self.assertEqual(values["reviewed_subset"]["correctness"], {
+                "numerator": 0, "denominator": 0, "rate": None})
+        self.assertIn("Historical cached responses", analysis["limitations"][0])
+
+    def test_human_analysis_counts_failures_categories_and_proxy_disagreement(self):
+        prepare(self.suite, self.packet_dir)
+        rows, mapping = self.label_rows()
+        failed_variant = mapping[rows[0]["review_key"]]["variant"]
+        rows[1].update(correct=True, supported=True, failure_stage="none", notes="")
+        rows[2].update(correct=True, supported=True, failure_stage="reference_label",
+                       notes="Synthetic reference dispute.")
+        self.write_labels(rows)
+        output = self.root / "analysed"
+        import_labels(self.suite, self.packet_dir, self.labels, output)
+        analysis = json.loads((output / "review-analysis.json").read_text())
+        self.assertEqual(analysis["status"], "complete_development_review")
+        self.assertEqual(analysis["paired_reviewed_cases"], 1)
+        self.assertEqual(len(analysis["repair_queue"]), 2)  # Failure + reference dispute.
+        values = analysis["variants"][failed_variant]
+        self.assertEqual(values["reviewed_subset"]["correctness"]["denominator"], 1)
+        self.assertEqual(values["reviewed_subset"]["both"]["numerator"], 0)
+        self.assertEqual(values["reviewed_subset"]["faithfulness"]["rate"], 1)
+        self.assertEqual(values["proxy_vs_human_both"]["proxy_fail_human_fail"], 1)
+        category = next(iter(values["categories"].values()))
+        self.assertEqual(category["eligible_outputs"], 1)
+        self.assertEqual(category["correctness"]["rate"], 0)
+        markdown = (output / "review-analysis.md").read_text()
+        self.assertNotIn("Synthetic reference dispute", markdown)
+        self.assertIn("1/1", markdown)
+
+    def test_blocked_outputs_are_not_counted_as_human_quality_failures(self):
+        self.change("hybrid", lambda d: d["results"][0].update(error="Synthetic API failure"))
+        prepare(self.suite, self.packet_dir)
+        analysis = json.loads((self.packet_dir / "review-analysis.json").read_text())
+        self.assertEqual(analysis["eligible_outputs"], 2)
+        values = analysis["variants"]["hybrid"]
+        self.assertEqual(values["blocked_outputs"], 1)
+        self.assertEqual(values["reviewed_subset"]["both"]["denominator"], 0)
+        self.assertIsNone(values["reviewed_subset"]["both"]["rate"])
+
+    def test_partial_analysis_keeps_paired_denominator_zero(self):
+        prepare(self.suite, self.packet_dir)
+        rows, _ = self.label_rows()
+        self.write_labels(rows[:1])
+        output = self.root / "partial-analysis"
+        import_labels(self.suite, self.packet_dir, self.labels, output)
+        analysis = json.loads((output / "review-analysis.json").read_text())
+        self.assertEqual(analysis["status"], "partial")
+        self.assertEqual(analysis["reviewed_outputs"], 1)
+        for values in analysis["variants"].values():
+            self.assertIsNone(values["paired_subset"]["both"]["rate"])
+
+    def test_rejects_unknown_fields_oversized_and_contradictory_labels(self):
+        prepare(self.suite, self.packet_dir)
+        rows, _ = self.label_rows()
+        for change in ({"extra": "unapproved data"}, {"reviewer": "x" * 81},
+                       {"notes": "x" * 5001}, {"failure_stage": "none"}):
+            with self.subTest(change=list(change)):
+                self.write_labels([{**rows[0], **change}])
+                with self.assertRaises(ValueError):
+                    import_labels(self.suite, self.packet_dir, self.labels, self.root / "invalid")
+
+    def test_review_navigation_does_not_fill_or_attest_grades(self):
+        prepare(self.suite, self.packet_dir)
+        page = (self.packet_dir / "review.html").read_text()
+        self.assertIn('id="unreviewed"', page)
+        self.assertIn('id="jump"', page)
+        self.assertIn("整题完成", page)
+        self.assertNotIn("localStorage", page)
+        self.assertNotIn("sessionStorage", page)
+
     def test_import_binds_exact_outputs_and_preserves_original_report(self):
         prepare(self.suite, self.packet_dir)
         rows, _ = self.label_rows()

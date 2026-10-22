@@ -8,7 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from app.config import Settings, get_settings
-from app.main import app, get_feedback_agent, get_study_store
+from app.main import app, get_feedback_agent, get_hybrid_base, get_study_store
+from app.services.agent_checks import check_feedback
 from app.services.study_agent import PlanRequest
 from app.services.study_feedback import FeedbackAgent, FeedbackRequest
 from app.services.study_store import StudyBudgetExceeded, StudyConflict, StudyStore
@@ -43,7 +44,8 @@ class FeedbackTests(unittest.TestCase):
                                        answer="Any keyword overlap proves an answer correct.")
         self.search = Mock(return_value=[{"filename": "source.md", "chunk_id": "test",
             "path": "DEMO101/lecture/source.md", "text": QUOTE, "score": 1.0}])
-        self.base = SimpleNamespace(retrieve=self.search)
+        self.base = SimpleNamespace(retrieve=self.search, source=lambda identifier: next(
+            (row for row in self.search.return_value if row["chunk_id"] == identifier), None))
 
     def proposal(self, verdict="needs_review"):
         return {"assessment": {"verdict": verdict, "explanation": "Evidence must support claims.",
@@ -87,6 +89,39 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(self.calls.call_count, 2)  # Confirmation does not call model.
         reopened = StudyStore(self.store.path).get(result["id"])
         self.assertEqual(reopened["tasks"], updated["tasks"])
+
+    def test_changed_source_blocks_feedback_confirmation_without_touching_progress(self):
+        result = self.run_feedback()
+        feedback = result["feedback"][0]
+        self.assertEqual(feedback["verification"]["status"], "passed")
+        self.base.source = lambda _: None
+        with self.assertRaises(StudyConflict):
+            self.store.confirm_feedback(result["id"], feedback["id"], result["version"],
+                verifier=lambda parent, child: check_feedback(parent, child, self.base.source))
+        self.assertEqual(self.store.get(result["id"])["tasks"], self.plan["tasks"])
+        self.assertEqual(self.calls.call_count, 2)
+
+    def test_progress_changed_during_generation_blocks_postcheck_and_preserves_completed_task(self):
+        agent = self.agent()
+        outputs = iter([response("search_knowledge", {"query": "evidence"}),
+                        response("propose_feedback", self.proposal())])
+
+        def respond(**kwargs):
+            result = next(outputs)
+            if result.output[0].name == "propose_feedback":
+                current = self.store.get(self.plan["id"])
+                self.store.set_task(current["id"], current["tasks"][1]["id"], True,
+                                    current["version"])
+            return result
+
+        self.calls.side_effect = respond
+        result = self.run_feedback(agent)
+        self.assertTrue(result["tasks"][1]["done"])
+        feedback = result["feedback"][0]
+        self.assertEqual(feedback["status"], "failed")
+        self.assertEqual(feedback["error_code"], "postcheck_failed")
+        self.assertEqual(feedback["verification"]["status"], "blocked")
+        self.assertEqual(feedback["adjustments"], [])
 
     def test_idempotent_submission_and_confirmation_never_repeat_calls_or_edits(self):
         agent = self.agent()
@@ -200,6 +235,7 @@ class FeedbackTests(unittest.TestCase):
         app.dependency_overrides[get_settings] = lambda: self.config
         app.dependency_overrides[get_study_store] = lambda: self.store
         app.dependency_overrides[get_feedback_agent] = lambda: agent
+        app.dependency_overrides[get_hybrid_base] = lambda: self.base
         self.addCleanup(app.dependency_overrides.clear)
         client = TestClient(app)
         url = f"/api/study-plans/{self.plan['id']}"

@@ -1,6 +1,7 @@
 export type StudyCitation = { filename: string; source_id?: string; quote: string; chunk_id?: string; page?: number; locator_type?: "page" | "slide" | "section" };
 export type StudyTask = { id: string; day: number; title: string; minutes: number; study_goal: string; quiz_question: string; quiz_answer: string; citations: StudyCitation[]; done: boolean };
 export type StudyFeedback = {
+  verification?: import("./agent-verification").Verification;
   id: string; task_id: string; base_version: number; status: "running" | "draft" | "active" | "failed" | "interrupted";
   recovery_available?: boolean; checkpoint_at?: string;
   request: { answer: string }; error_code?: string; accounted_cost_usd: number; uncertain_calls: number;
@@ -10,6 +11,7 @@ export type StudyFeedback = {
   trace?: { step: number; tool: string; status: string; evidence_count?: number }[];
 };
 export type StudyPlan = {
+  verification?: import("./agent-verification").Verification;
   id: string; course: string; title?: string; status: "running" | "draft" | "active" | "failed" | "interrupted"; version: number;
   recovery_available?: boolean; checkpoint_at?: string;
   request: { goal: string; days: number; daily_minutes: number };

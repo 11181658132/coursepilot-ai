@@ -18,6 +18,32 @@ async def chunks(*values: bytes):
 
 
 class DocumentServiceTests(unittest.TestCase):
+    def test_cancelled_upload_removes_temporary_file_without_publishing(self):
+        async def cancelled():
+            yield b"partial text"
+            raise asyncio.CancelledError()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(save_upload(root, "A", "lecture", "cancelled.md", cancelled(), 100))
+            self.assertFalse((root / "A/lecture/cancelled.md").exists())
+            self.assertEqual(list(root.rglob("*.upload")), [])
+
+    def test_opt_in_identical_upload_reuses_file_but_never_overwrites_different_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = asyncio.run(save_upload(root, "A", "lecture", "a.md",
+                                            chunks(b"same content"), 100))
+            again = asyncio.run(save_upload(root, "A", "lecture", "a.md",
+                                            chunks(b"same content"), 100, allow_identical=True))
+            self.assertEqual(first, again)
+            with self.assertRaises(FileExistsError):
+                asyncio.run(save_upload(root, "A", "lecture", "a.md",
+                                        chunks(b"different"), 100, allow_identical=True))
+            self.assertEqual(first[0].read_bytes(), b"same content")
+            self.assertEqual(list(root.rglob("*.upload")), [])
+
     def test_concurrent_same_name_upload_never_overwrites(self):
         async def race(root):
             both_started = asyncio.Event()

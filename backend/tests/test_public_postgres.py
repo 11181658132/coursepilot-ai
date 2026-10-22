@@ -96,6 +96,17 @@ class PublicPostgresIntegrationTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             self.assertEqual(sum(pool.map(reserve, [(self.one, first), (self.two, second)])), 1)
 
+    def test_failed_confirmation_postcheck_rolls_back_on_real_postgres(self):
+        from app.services.agent_checks import check_plan
+
+        run, _ = self.one.start(self.request)
+        self.one.finish(run["id"], "draft", {"request": run["request"], "tasks": [], "trace": []})
+        before = self.one.get(run["id"])
+        with self.assertRaises(StudyConflict):
+            self.one.confirm(run["id"], before["version"],
+                             verifier=lambda state: check_plan(state, lambda _: None))
+        self.assertEqual(self.one.get(run["id"]), before)
+
     def test_deletion_persists_without_refunding_cost_or_allowing_request_replay(self):
         run, _ = self.one.start(self.request)
         self.one.reserve(run["id"], 0.02, 0.05, 0.10)

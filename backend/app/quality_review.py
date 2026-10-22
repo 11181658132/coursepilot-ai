@@ -10,6 +10,7 @@ from statistics import mean
 from app.benchmark import DATASET, SOURCES, VARIANTS, corpus_hash
 from app.config import PROJECT_ROOT
 from app.evaluation import SCORING_VERSION, apply_reviews, load_cases, result_hash
+from app.review_analysis import analyse_reviews, render_analysis
 
 STAGES = ("retrieval", "answer", "citation", "reference_label", "upstream", "none", "uncertain")
 
@@ -117,6 +118,8 @@ def prepare(directory, output):
     }, indent=2))
     (output / "diagnosis.json").write_text(json.dumps(analysis, indent=2))
     (output / "review.html").write_text(render_review(packet), encoding="utf-8")
+    analysis_report = analyse_reviews(reports, cases, {name: [] for name in VARIANTS})
+    write_analysis(output, analysis_report)
     lines = ["# Offline RAG development diagnosis", "", analysis["warning"], "",
              "All historical reports are unchanged; no holdout answers or API calls.", "",
              "| Variant | Cases | Blocked | Proxy failures |", "|---|---:|---:|---:|"]
@@ -157,6 +160,11 @@ def import_labels(directory, packet_dir, labels_path, output):
         if not line.strip():
             continue
         label = json.loads(line)
+        if not isinstance(label, dict) or set(label) != {
+            "review_key", "response_hash", "correct", "supported", "human_attested",
+            "reviewer", "failure_stage", "notes",
+        }:
+            raise ValueError("Unknown/missing review fields")
         key = label.get("review_key")
         if key not in mapping or key in seen:
             raise ValueError("Unknown or duplicate review key")
@@ -167,12 +175,15 @@ def import_labels(directory, packet_dir, labels_path, output):
                 or type(label.get("supported")) is not bool
                 or label.get("human_attested") is not True
                 or not isinstance(label.get("reviewer"), str) or not label["reviewer"].strip()
+                or len(label["reviewer"]) > 80
                 or label.get("failure_stage") not in STAGES
-                or not isinstance(label.get("notes"), str)):
+                or not isinstance(label.get("notes"), str) or len(label["notes"]) > 5000):
             raise ValueError("Require exact hash, two boolean grades and attested human reviewer")
         if (not label["correct"] or not label["supported"]
                 or label["failure_stage"] == "reference_label") and not label["notes"].strip():
             raise ValueError("Failed grades/reference-label disputes require explanatory notes")
+        if (not label["correct"] or not label["supported"]) and label["failure_stage"] == "none":
+            raise ValueError("Failed grades cannot claim no issue; choose a stage or uncertain")
         groups[item["variant"]].append({**label, "id": item["id"]})
     if not seen:
         raise ValueError("No completed human reviews to import")
@@ -196,7 +207,14 @@ def import_labels(directory, packet_dir, labels_path, output):
                                           r["supported"] for r in groups[name] if r["id"] in paired)
                                       if paired else None} for name, values in summaries.items()}}
     (output / "human-summary.json").write_text(json.dumps(comparison, indent=2))
+    write_analysis(output, analyse_reviews(reports, cases, groups))
     return comparison
+
+
+def write_analysis(output, analysis):
+    (output / "review-analysis.json").write_text(
+        json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8")
+    (output / "review-analysis.md").write_text(render_analysis(analysis), encoding="utf-8")
 
 
 def main():

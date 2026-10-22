@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from app.services.library import SUPPORTED_EXTENSIONS, discover_documents
+from app.services.library import SUPPORTED_EXTENSIONS, discover_documents, sha256_file
 
 MATERIAL_TYPES = {"lecture", "tutorial", "other"}
 
@@ -69,12 +69,13 @@ async def save_upload(
     filename: str,
     chunks: AsyncIterable[bytes],
     max_bytes: int,
+    *, allow_identical: bool = False,
 ) -> Tuple[Path, int]:
     if max_bytes <= 0:
         raise DocumentValidationError("Upload limit must be positive")
     target = build_upload_path(root, course, material_type, filename)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
+    if target.exists() and not allow_identical:
         raise FileExistsError(f"A file named {target.name} already exists")
 
     descriptor, temporary_name = tempfile.mkstemp(
@@ -96,15 +97,21 @@ async def save_upload(
             raise DocumentValidationError("Uploaded file is empty")
         _validate_file_signature(Path(temporary_name), target.suffix.lower())
         # Atomic create-if-absent: two concurrent uploads must never overwrite.
-        os.link(temporary_name, target)
+        try:
+            os.link(temporary_name, target)
+        except FileExistsError:
+            if (not allow_identical or not target.is_file()
+                    or sha256_file(target) != sha256_file(Path(temporary_name))):
+                raise FileExistsError(
+                    f"A different file named {target.name} already exists"
+                ) from None
         os.unlink(temporary_name)
         return target, total
-    except Exception:
+    finally:
         try:
             os.unlink(temporary_name)
         except FileNotFoundError:
             pass
-        raise
 
 
 def list_documents(root: Path, state: Dict[str, Any]) -> List[Dict[str, object]]:

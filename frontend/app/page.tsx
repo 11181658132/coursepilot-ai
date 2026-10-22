@@ -6,9 +6,10 @@ import StudyAgent from "./study-agent";
 import DemoGuide from "./demo-guide";
 import RequestStatus from "./request-status";
 import { requestError } from "../lib/request-error";
+import { uploadQuery, visibleIndexJobs, versionLabel, chooseCourse } from "../lib/document-jobs";
 
 type Course = { course: string; lecture_count: number; tutorial_count: number; other_count: number; indexed_count: number };
-type Source = { chunk_id?: string; path?: string; page?: number; locator_type?: "page" | "slide" | "section"; week?: number; source_id?: string };
+type Source = { chunk_id?: string; path?: string; page?: number; locator_type?: "page" | "slide" | "section"; week?: number; source_id?: string; document_version?: string; version_status?: string };
 type Citation = Source & { filename: string; file_id?: string; quote?: string };
 type Evidence = Source & { filename: string; score?: number; text: string; bm25_score?: number; vector_score?: number; rerank_score?: number };
 type SourcePreview = Source & { filename: string; text: string };
@@ -79,6 +80,7 @@ export default function Home() {
   const [uploadCourse, setUploadCourse] = useState(DEMO_MODE ? DEMO_COURSES[0].course : "");
   const [uploadMaterial, setUploadMaterial] = useState("lecture");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [indexAfterUpload, setIndexAfterUpload] = useState(false);
   const [syncPreview, setSyncPreview] = useState<SyncReport | null>(null);
   const [demoThreads, setDemoThreads] = useState<Record<string, Message[]>>({});
   const [remainingToday, setRemainingToday] = useState<number | null>(null);
@@ -87,6 +89,7 @@ export default function Home() {
   const [quotaError, setQuotaError] = useState("");
   const [engine, setEngine] = useState<"file_search" | "hybrid">("hybrid");
   const [indexJob, setIndexJob] = useState<IndexJob | null>(null);
+  const [waitingIndexJobs, setWaitingIndexJobs] = useState(0);
   const lastJobState = useRef("");
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
@@ -165,6 +168,7 @@ export default function Home() {
     if (!courseResponse.ok || !documentResponse.ok) throw new Error("无法读取资料列表");
     const courseData = await courseResponse.json() as Course[];
     setCourses(courseData);
+    setCourse(current => chooseCourse(current, courseData));
     setDocuments(await documentResponse.json());
     if (!uploadCourse && courseData.length > 0) setUploadCourse(courseData[0].course);
   }
@@ -186,10 +190,10 @@ export default function Home() {
         if (!response.ok) throw new Error("无法读取索引任务；请检查后端连接。");
         const jobs = await response.json() as IndexJob[];
         if (controller.signal.aborted) return;
-        const latest = jobs[0] ?? null;
-        setIndexJob(latest);
-        const key = latest ? `${latest.id}:${latest.status}` : "";
-        if (latest && key !== lastJobState.current && ["succeeded", "failed"].includes(latest.status)) {
+        const { active, waiting } = visibleIndexJobs(jobs);
+        setIndexJob(active); setWaitingIndexJobs(waiting);
+        const key = jobs.filter(job => ["succeeded", "failed"].includes(job.status)).map(job => `${job.id}:${job.status}`).join(",");
+        if (key && key !== lastJobState.current) {
           await refreshLibrary();
         }
         lastJobState.current = key;
@@ -381,9 +385,7 @@ export default function Home() {
     setError("");
     setNotice("");
     try {
-      const query = new URLSearchParams({
-        course: uploadCourse.trim(), material_type: uploadMaterial, filename: uploadFile.name,
-      });
+      const query = uploadQuery(uploadCourse, uploadMaterial, uploadFile.name, engine, indexAfterUpload);
       const response = await fetch(`${API_URL}/api/documents/upload?${query}`, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
@@ -393,7 +395,8 @@ export default function Home() {
       if (!response.ok) throw new Error(data.detail ?? "上传失败");
       setUploadFile(null);
       setSyncPreview(null);
-      setNotice("文件已安全保存。点击“检查索引更新”后再开始索引。");
+      if (data.index_job) setIndexJob(data.index_job);
+      setNotice(data.index_job ? `文件已保存，索引任务 ${data.index_job.id} 已持久化。Worker 将处理待更新资料；此任务可能包含其他待处理文件。` : "文件已安全保存。点击“检查索引更新”后再开始索引。");
       await refreshLibrary();
       const input = document.getElementById("document-file") as HTMLInputElement | null;
       if (input) input.value = "";
@@ -511,7 +514,9 @@ export default function Home() {
     try {
       const response = await fetch(`${DEMO_MODE ? "/api/demo" : `${API_URL}/api`}/sources/${encodeURIComponent(citation.chunk_id)}`);
       if (!response.ok) throw new Error("原文已变化或删除，请重新建立索引。");
-      setSourcePreview(await response.json());
+      const source = await response.json() as SourcePreview;
+      if (citation.document_version && source.document_version && citation.document_version !== source.document_version) throw new Error("引用来自旧资料版本，请重新提问。");
+      setSourcePreview(source);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "无法打开原文");
     } finally {
@@ -615,6 +620,7 @@ export default function Home() {
                     {citation.chunk_id ? <button className="sourceLink" disabled={sourceLoading} onClick={() => inspectSource(citation)}>
                       [{citation.source_id}] {citation.filename}{sourceLocation(citation)} · 查看原文
                     </button> : citation.filename}
+                    {versionLabel(citation) && <small>{versionLabel(citation)}</small>}
                     {citation.quote && <blockquote>{citation.quote}</blockquote>}
                   </li>)}
                 </ul>}
@@ -653,7 +659,7 @@ export default function Home() {
       </section> : <section className="documentWorkspace">
         <div className="managerHeader">
           <div><div className="sectionLabel">KNOWLEDGE BASE</div><h2>课程资料管理</h2>
-            <p>{DEMO_MODE ? "浏览 5 份虚构示例资料。公开空间为只读，不会上传或删除文件。" : "上传只会保存到本地知识库；检查后由你决定是否发送到 OpenAI 建立索引。"}</p>
+            <p>{DEMO_MODE ? "浏览 5 份虚构示例资料。公开空间为只读，不会上传或删除文件。" : "默认只保存到本地。可明确勾选后台索引，或检查后再开始；索引会向 OpenAI 发送待处理资料。"}</p>
           </div>
           <button className="secondaryButton" onClick={previewIndex} disabled={documentLoading}>检查索引更新</button>
         </div>
@@ -671,7 +677,8 @@ export default function Home() {
           <label className="fileField">选择文件
             <input id="document-file" type="file" accept=".pdf,.pptx,.txt,.md,.docx" onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)} required />
           </label>
-          <button disabled={documentLoading || !uploadFile || !uploadCourse.trim()}>{documentLoading ? "处理中…" : "上传到本地"}</button>
+          {!DEMO_MODE && engine === "hybrid" && <label className="uploadConsent"><span className="taskToggle"><input type="checkbox" checked={indexAfterUpload} disabled={documentLoading} onChange={event => setIndexAfterUpload(event.target.checked)} /> 上传后加入后台索引</span><small>会发送知识库中待更新资料给 OpenAI 生成向量并产生费用；需独立 Worker 运行。未勾选只保存文件。</small></label>}
+          <button disabled={documentLoading || !uploadFile || !uploadCourse.trim()}>{documentLoading ? "处理中…" : indexAfterUpload && engine === "hybrid" && !DEMO_MODE ? "上传并排队索引" : "上传到本地"}</button>
         </form>
 
         {syncPreview && <div className="syncCard">
@@ -682,8 +689,9 @@ export default function Home() {
         </div>}
         {!DEMO_MODE && engine === "hybrid" && indexJob && <section className="syncCard" aria-label="后台索引任务" aria-live="polite">
           <div><strong>后台索引 · {({ queued: "等待处理", running: "处理中", succeeded: "已完成", failed: "失败" })[indexJob.status]}</strong>
-            <span>阶段：{({ waiting: "等待 Worker", scanning: "扫描", parsing: "解析", embedding: "向量化", committing: "保存索引", finalizing: "清理", interrupted: "中断恢复", retry_wait: "等待限额恢复", succeeded: "完成", failed: "失败" } as Record<string, string>)[indexJob.phase] ?? indexJob.phase} · 已处理 {indexJob.processed}/{indexJob.total} · 尝试 {indexJob.attempts}/{indexJob.max_attempts}</span>
+            <span>阶段：{({ waiting: "等待 Worker", scanning: "扫描", parsing: "解析", chunking: "切块", embedding: "向量化", committing: "保存索引", finalizing: "清理", interrupted: "中断恢复", retry_wait: "等待限额恢复", blocked: "等待人工处理", succeeded: "完成", failed: "失败" } as Record<string, string>)[indexJob.phase] ?? indexJob.phase} · 已处理 {indexJob.processed}/{indexJob.total} · 尝试 {indexJob.attempts}/{indexJob.max_attempts}</span>
             <small>任务 {indexJob.id} · 已记录估算费用 ${indexJob.estimated_cost_usd.toFixed(6)}</small>
+            {waitingIndexJobs > 0 && <p>另有 {waitingIndexJobs} 个持久化待处理任务，将在当前扫描后继续；无需重复上传。</p>}
             {indexJob.status === "queued" && <p>{indexJob.phase === "retry_wait" ? `下次尝试不早于 ${new Date(indexJob.available_at * 1000).toLocaleString()}` : "请保持独立索引 Worker 运行；任务已持久化，无需保持此页面打开。"}</p>}
             {indexJob.error_code && <p>错误：{({ provider_quota_exhausted: "API 余额或配额不足，请处理账单后手动重试。", provider_authentication: "API 密钥无效或权限不足，请检查配置。", configuration_missing: "未配置 API Key，请在本地 .env 中配置后重试。", indexing_failed: "部分文件未能索引，请查看下方错误。", worker_interrupted: "上次 Worker 意外中断。" } as Record<string, string>)[indexJob.error_code] ?? indexJob.error_code}</p>}
             {indexJob.report && <p>新增 {indexJob.report.uploaded} · 替换 {indexJob.report.replaced} · 跳过 {indexJob.report.skipped} · 失败 {indexJob.report.failed}</p>}

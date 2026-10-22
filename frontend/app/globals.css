@@ -2,6 +2,8 @@
 * { box-sizing:border-box; }
 body { margin:0; min-height:100vh; background:var(--paper); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; font-size:14px; -webkit-font-smoothing:antialiased; }
 button,input,select,textarea { font:inherit; }
+.uploadCard .uploadConsent { grid-column:1/-1; gap:8px; }
+.uploadConsent small { color:var(--muted); line-height:1.7; }
 button { border:0; border-radius:10px; padding:12px 20px; background:var(--forest); color:#fff; font-weight:600; cursor:pointer; transition:background .18s,box-shadow .18s,border-color .18s; }
 button:hover:not(:disabled) { background:#5844bd; box-shadow:0 4px 12px #6652cc18; }
 button:disabled { opacity:.45; cursor:not-allowed; }
