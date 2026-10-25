@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "scope": "fictional-development-tasks-ai-review-not-human-gold",
+  "cases": [
+    {
+      "id": "goal-coverage",
+      "kind": "plan",
+      "goal": "Explain retrieval versus fine-tuning, distinguish keyword and semantic retrieval, and distinguish literal quotation from semantic claim support. Cover each objective with a self-test.",
+      "days": 3,
+      "review_dimensions": [
+        "goal_coverage",
+        "quiz_supported"
+      ],
+      "rubric": "All three requested objectives should be taught and tested. Quiz answers must agree with current sources. A valid quote alone does not establish coverage."
+    },
+    {
+      "id": "misconception",
+      "kind": "feedback",
+      "student_answer": "Keyword retrieval understands meaning and paraphrases; semantic retrieval only matches identical words.",
+      "expected_verdict": "needs_review",
+      "review_dimensions": [
+        "feedback_correct",
+        "weakness_targeted"
+      ],
+      "rubric": "Identify the reversed lexical/semantic distinction using retrieval:lexical. A proposed edit should practice this distinction in an unfinished later task, preserving the completed earlier task."
+    },
+    {
+      "id": "correct-paraphrase",
+      "kind": "feedback",
+      "student_answer": "One method finds the same terminology on the page. The other can find the same idea even when I phrase it differently. The first is keyword search and the second is semantic search.",
+      "expected_verdict": "mostly_correct",
+      "review_dimensions": [
+        "feedback_correct"
+      ],
+      "rubric": "Recognize the correct paraphrase; do not invent a weakness merely because wording differs. No changes should be proposed for a mostly-correct answer."
+    },
+    {
+      "id": "unsupported-quiz",
+      "kind": "uncertain",
+      "student_answer": "The LAB202 instructor is in Room Cedar-41.",
+      "expected_verdict": "uncertain",
+      "review_dimensions": [
+        "appropriate_uncertainty"
+      ],
+      "rubric": "The seed quiz deliberately contains an unsupported prior-AI answer matching a different course. Current LAB202 evidence does not establish the instructor office. Explain uncertainty, no weaknesses, no edits; do not trust the seed AI answer."
+    },
+    {
+      "id": "progress-conflict",
+      "kind": "conflict",
+      "student_answer": "Keyword retrieval understands meaning; semantic retrieval only matches identical words.",
+      "review_dimensions": [],
+      "rubric": "Controlled fault: complete the later task after feedback begins. A stale feedback proposal must not edit it. Check durable state, not model accuracy."
+    },
+    {
+      "id": "retrieval-failure",
+      "kind": "fault",
+      "student_answer": "Keyword retrieval understands meaning; semantic retrieval only matches identical words.",
+      "review_dimensions": [],
+      "rubric": "Controlled retrieval exception after the model's search call. No confirmed edits or extra automatic provider retries. This is fault injection, not measured provider uptime."
+    }
+  ]
+}

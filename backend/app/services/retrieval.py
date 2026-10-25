@@ -47,7 +47,10 @@ def cosine(left: List[float], right: List[float]) -> float:
     return sum(a * b for a, b in zip(left, right)) / denominator if denominator else 0.0
 
 
-def rank_candidates(query: str, rows: List[dict], vector: List[float], limit: int) -> List[dict]:
+def rank_candidates(query: str, rows: List[dict], vector: List[float], limit: int,
+                    mode: str = "hybrid") -> List[dict]:
+    if mode not in {"bm25", "vector", "hybrid"}:
+        raise ValueError("Unknown retrieval mode")
     # Repeated extraction within one document should not consume candidate slots
     # or distort BM25 document frequencies. Keep different files independently
     # citable and keep genuinely different/overlapping passages intact.
@@ -58,17 +61,23 @@ def rank_candidates(query: str, rows: List[dict], vector: List[float], limit: in
             seen.add(identity)
             unique.append(row)
     rows = unique
-    lexical = bm25(query, [row["text"] for row in rows])
-    dense = [cosine(vector, row["embedding"]) for row in rows]
+    lexical = (bm25(query, [row["text"] for row in rows]) if mode != "vector"
+               else [0.0] * len(rows))
+    dense = ([cosine(vector, row["embedding"]) for row in rows] if mode != "bm25"
+             else [0.0] * len(rows))
     rankings = [
         sorted((i for i, score in enumerate(values) if score > 0),
                key=lambda i: (-values[i], rows[i]["chunk_id"]))[:limit]
         for values in (lexical, dense)
     ]
     fused = Counter()
-    for ranking in rankings:
-        for rank, i in enumerate(ranking, 1):
-            fused[i] += 1 / (60 + rank)
+    if mode == "hybrid":
+        for ranking in rankings:
+            for rank, i in enumerate(ranking, 1):
+                fused[i] += 1 / (60 + rank)
+    else:
+        values, ranking = (lexical, rankings[0]) if mode == "bm25" else (dense, rankings[1])
+        fused.update({i: values[i] for i in ranking})
     ordered = sorted(fused, key=lambda i: (-fused[i], rows[i]["chunk_id"]))[:limit]
     return [{**rows[i], "score": fused[i], "bm25_score": lexical[i],
              "vector_score": dense[i]} for i in ordered]

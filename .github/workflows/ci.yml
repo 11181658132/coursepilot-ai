@@ -47,6 +47,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Validate fictional evaluation dataset (no API calls)
         run: python -m app.benchmark --validate
+      - name: Validate passage challenge and learning-task fixtures (no API calls)
+        run: python -m app.challenge_suite
       - name: Agent service-contract evaluation (scripted, no API calls)
         run: python -m app.agent_evaluation
 
