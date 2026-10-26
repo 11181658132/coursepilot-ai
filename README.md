@@ -109,6 +109,11 @@ AI 核对由开发助手完成，**不是人工准确率**。来源主要为英�
 低于两项共同授权的 $0.50。预跑输入不对称的结果未用于上表，但费用完整计入。
 详见[结果、成本与失败分析](docs/RAG_AGENT_CHALLENGE_RESULTS_ZH.md)及[方法与复现](docs/RAG_AGENT_CHALLENGE_ZH.md)。
 
+2026-10-26 已针对 Agent 反馈失败补上引文编号选择、薄弱点与调整理由关联，以及
+“保留有效反馈、拦截无效调整”的降级处理，前端会明确提示，仍须人工确认才能应用调整。
+本次仅离线回归，新增 API 费用为 0；未重写上述历史成绩或宣称模型语义问题已全部解决。
+详见[修复、验证与剩余限制](docs/AGENT_FEEDBACK_REPAIR_ZH.md)。
+
 ## 学习 Agent：可执行，但不替用户决定
 
 Agent 只能调用允许的资料查询与草稿提议工具，不能执行任意代码，也不能自行启用计划或修改进度。
@@ -284,3 +289,4 @@ PYTHONPATH=backend .venv/bin/python -m app.benchmark \
 - [人工审核操作指南](docs/HUMAN_REVIEW_ZH.md)
 - [RAG 错误分析流程](docs/RAG_QUALITY_WORKFLOW.md)
 - [Agent 评测协议](evals/AGENT_EVALUATION.md)
+- [Agent 反馈与针对性调整修复](docs/AGENT_FEEDBACK_REPAIR_ZH.md)

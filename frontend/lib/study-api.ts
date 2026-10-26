@@ -8,6 +8,8 @@ export type StudyFeedback = {
   assessment?: { verdict: "mostly_correct" | "needs_review" | "uncertain"; explanation: string; weaknesses: string[]; citations: StudyCitation[] };
   adjustments: { task_id: string; title: string; study_goal: string; quiz_question: string; quiz_answer: string; citations: StudyCitation[] }[];
   remaining_tasks?: StudyTask[];
+  adjustment_status?: "blocked";
+  adjustment_targets?: { task_id: string; weakness_indices: number[]; rationale: string }[];
   trace?: { step: number; tool: string; status: string; evidence_count?: number }[];
 };
 export type StudyPlan = {

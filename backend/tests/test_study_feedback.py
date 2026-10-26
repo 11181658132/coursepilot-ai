@@ -55,6 +55,8 @@ class FeedbackTests(unittest.TestCase):
                 "study_goal": "Compare keyword overlap and real support.",
                 "quiz_question": "Does shared terminology guarantee support?",
                 "quiz_answer": "No, evidence must support the claim.",
+                "weakness_indices": [0],
+                "rationale": "Practice distinguishing shared words from evidence support.",
                 "citation": {"source_id": "S1", "quote": QUOTE}}]
             if verdict == "needs_review" else []}
 
@@ -169,6 +171,73 @@ class FeedbackTests(unittest.TestCase):
         result = self.run_feedback()
         self.assertEqual(result["feedback"][0]["assessment"]["verdict"], "uncertain")
         self.assertEqual(self.calls.call_count, 1)
+
+    def test_current_quote_ids_are_resolved_server_side_and_tool_schema_has_no_free_quote(self):
+        proposal = self.proposal()
+        proposal["assessment"]["citations"] = [{"source_id": "S1", "quote_id": "S1.Q1"}]
+        proposal["adjustments"][0]["citation"] = {"source_id": "S1", "quote_id": "S1.Q1"}
+        result = self.run_feedback(self.agent(proposal))
+        feedback = result["feedback"][0]
+        self.assertEqual(feedback["status"], "draft")
+        self.assertEqual(feedback["assessment"]["citations"][0]["quote"], QUOTE)
+        self.assertEqual(feedback["adjustments"][0]["citations"][0]["quote"], QUOTE)
+        self.assertEqual(feedback["adjustment_targets"][0]["weakness_indices"], [0])
+        sent = self.calls.call_args.kwargs
+        schema = sent["tools"][1]["parameters"]["$defs"]["SelectedQuote"]
+        self.assertEqual(set(schema["properties"]), {"source_id", "quote_id"})
+        passages = json.loads(sent["input"][-1]["output"])["passages"]
+        self.assertEqual(passages[0]["quote_options"], [{"quote_id": "S1.Q1", "quote": QUOTE}])
+        self.assertEqual(self.calls.call_count, 2)
+
+    def test_cross_source_or_invented_quote_id_cannot_be_rebound(self):
+        proposal = self.proposal()
+        proposal["assessment"]["citations"] = [{"source_id": "S2", "quote_id": "S1.Q1"}]
+        result = self.run_feedback(self.agent(proposal))
+        self.assertEqual(result["feedback"][0]["status"], "failed")
+        self.assertNotIn("assessment", result["feedback"][0])
+        self.assertEqual(result["tasks"], self.plan["tasks"])
+
+    def test_invalid_edit_keeps_valid_assessment_and_blocks_all_edits_without_retry(self):
+        proposal = self.proposal()
+        proposal["adjustments"][0]["citation"] = {"source_id": "S2", "quote_id": "S1.Q1"}
+        result = self.run_feedback(self.agent(proposal))
+        feedback = result["feedback"][0]
+        self.assertEqual(feedback["status"], "draft")
+        self.assertEqual(feedback["assessment"]["verdict"], "needs_review")
+        self.assertEqual(feedback["adjustment_status"], "blocked")
+        self.assertEqual(feedback["adjustments"], [])
+        self.assertEqual(feedback["adjustment_targets"], [])
+        self.assertEqual(result["tasks"], self.plan["tasks"])
+        with self.assertRaises(StudyConflict):
+            self.store.confirm_feedback(result["id"], feedback["id"], result["version"])
+        self.assertEqual(self.calls.call_count, 2)
+
+    def test_copied_unrelated_learning_task_cannot_masquerade_as_targeted_edit(self):
+        proposal = self.proposal()
+        edit, previous = proposal["adjustments"][0], self.plan["tasks"][1]
+        for key in ("study_goal", "quiz_question", "quiz_answer"):
+            edit[key] = previous[key]
+        edit["title"] = "A new title cannot disguise unchanged learning content"
+        result = self.run_feedback(self.agent(proposal))
+        feedback = result["feedback"][0]
+        self.assertEqual(feedback["adjustment_status"], "blocked")
+        self.assertEqual(feedback["adjustment_error_code"], "unchanged_learning_task")
+        self.assertEqual(feedback["assessment"]["verdict"], "needs_review")
+        self.assertEqual(feedback["adjustments"], [])
+
+    def test_out_of_range_weakness_link_blocks_edit_without_claiming_semantic_success(self):
+        proposal = self.proposal()
+        proposal["adjustments"][0]["weakness_indices"] = [2]
+        result = self.run_feedback(self.agent(proposal))
+        feedback = result["feedback"][0]
+        self.assertEqual(feedback["adjustment_error_code"], "invalid_weakness_target")
+        self.assertEqual(feedback["verification"]["semantic_support"], "requires_human_review")
+
+    def test_confirmation_revalidates_weakness_links_for_new_feedback(self):
+        result = self.run_feedback()
+        feedback = result["feedback"][0]
+        feedback["adjustment_targets"][0]["weakness_indices"] = [8]
+        self.assertEqual(check_feedback(result, feedback, self.base.source)["status"], "blocked")
 
     def test_rejects_completed_current_foreign_and_duplicate_task_edits(self):
         for bad_id in (self.task["id"], uuid.uuid4().hex, self.plan["tasks"][2]["id"]):

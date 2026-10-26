@@ -65,12 +65,14 @@ export default function TaskFeedback({ plan, task, apiUrl, demoMode, busy, onPla
           <button type="button" disabled={!citation.chunk_id} onClick={() => onSource(citation)}>[{citation.source_id}] {citation.filename} · 核对依据</button><blockquote>{citation.quote}</blockquote>
         </div>)}
       </>}
+      {entry.adjustment_status === "blocked" && <p className="notice" role="status">反馈已保留，但附带的计划调整未通过检查，已拦截。原计划未改变，没有自动重试；请结合原文复习。</p>}
       {entry.adjustments.length > 0 && <section className="adjustmentProposal" aria-label="剩余计划调整草案">
         <h4>{entry.status === "active" ? "已确认的计划调整" : "建议调整剩余计划 · 待你确认"}</h4>
         {entry.adjustments.map(edit => {
           const previous = (entry.remaining_tasks ?? plan.tasks).find(item => item.id === edit.task_id);
           return <article key={edit.task_id}>
             <strong>第 {previous?.day} 天：{previous?.title} → {edit.title}</strong><p>{edit.study_goal}</p>
+            {entry.adjustment_targets?.filter(target => target.task_id === edit.task_id).map(target => <p key={target.task_id} className="notice">针对薄弱点 {target.weakness_indices.map(index => index + 1).join("、")}：{target.rationale}（AI 提议，请核对是否真正相关）</p>)}
             <details><summary>查看新自测题、参考答案与来源</summary><p>{edit.quiz_question}</p><p>{edit.quiz_answer}</p>{edit.citations.map((citation, index) => <div className="studyCitation" key={index}><button type="button" disabled={!citation.chunk_id} onClick={() => onSource(citation)}>{citation.filename} · 查看原文</button><blockquote>{citation.quote}</blockquote></div>)}</details>
           </article>;
         })}

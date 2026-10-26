@@ -90,6 +90,8 @@ class FakeSDK:
                     args["adjustments"] = [{"task_id": body["remaining_tasks"][0]["id"],
                         "title": "Review distinction", "study_goal": "Study the source distinction",
                         "quiz_question": "What is the distinction?", "quiz_answer": quote,
+                        "weakness_indices": [0],
+                        "rationale": "Practice the lexical/semantic distinction.",
                         "citation": citation}]
         return SimpleNamespace(status="completed", output=[Tool(type="function_call", name=name,
                                arguments=json.dumps(args), call_id="fixture-call")], output_text="",

@@ -66,6 +66,33 @@ def check_feedback(parent, feedback, lookup):
                 or edit["task_id"] in seen):
             constraints = False
         seen.add(edit.get("task_id"))
+    if feedback.get("feedback_contract_version") == 2:
+        # Structural linkage and no-op detection only, NOT a semantic relevance grade.
+        targets = feedback.get("adjustment_targets", [])
+        constraints = constraints and isinstance(targets, list) and len(targets) == len(edits)
+        linked = set()
+        for target in targets:
+            if not isinstance(target, dict):
+                constraints = False
+                continue
+            indices = target.get("weakness_indices", [])
+            identifier = target.get("task_id")
+            if (identifier not in seen or identifier in linked or not isinstance(indices, list)
+                    or not indices or any(type(i) is not int or i < 0 or
+                        i >= len(assessment.get("weaknesses", [])) for i in indices)
+                    or len(set(indices)) != len(indices)
+                    or not isinstance(target.get("rationale"), str)
+                    or not target["rationale"].strip()):
+                constraints = False
+            linked.add(identifier)
+        for edit in edits:
+            previous = eligible.get(edit.get("task_id"), {})
+            if all(" ".join(edit.get(key, "").split()) ==
+                   " ".join(previous.get(key, "").split()) for key in
+                   ("study_goal", "quiz_question", "quiz_answer")):
+                constraints = False
+        if feedback.get("adjustment_status") == "blocked" and edits:
+            constraints = False
     citations = assessment.get("citations", [])
     grounded = (verdict == "uncertain" and not citations and not edits) or (
         _citations_current(citations, parent["course"], lookup) and all(
